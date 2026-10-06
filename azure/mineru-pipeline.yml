@@ -1,0 +1,25 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
+name: pdf_mineru_pipeline
+version: '2'
+type: pipeline
+inputs:
+  pdfs:
+    type: uri_folder
+outputs:
+  results:
+    type: uri_folder
+    mode: rw_mount
+jobs:
+  parse:
+    type: command
+    component: ./mineru-command.yml
+    inputs:
+      models:
+        type: custom_model
+        path: azureml:pdf-mineru-models:1
+        mode: download
+      pdfs: ${{parent.inputs.pdfs}}
+    outputs:
+      results: ${{parent.outputs.results}}
+    limits:
+      timeout: 86400  # 24 hours for the whole batch.

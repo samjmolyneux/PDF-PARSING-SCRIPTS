@@ -1,0 +1,4 @@
+$schema: https://azuremlschemas.azureedge.net/latest/batchEndpoint.schema.json
+name: eppi-pdf-parsers-ccaesjm
+description: Team PDF parsing with MinerU and PaddleOCR-VL.
+auth_mode: aad_token

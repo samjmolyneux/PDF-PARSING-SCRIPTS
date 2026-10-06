@@ -1,0 +1,7 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: pdf-mineru
+version: '2'
+description: MinerU 3.3.1 hybrid engine; weights supplied as a separate model asset.
+# Keep the CUDA/runtime generation used by the working parser.
+image: vllm/vllm-openai:v0.21.0
+conda_file: ./conda.yml

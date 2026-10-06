@@ -1,0 +1,31 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+name: pdf_paddle_command
+version: '2'
+type: command
+is_deterministic: false
+code: ../workers
+environment: azureml:pdf-paddle:2
+inputs:
+  models:
+    type: custom_model
+    mode: download
+  pdfs:
+    type: uri_folder
+    mode: download
+outputs:
+  results:
+    type: uri_folder
+    mode: rw_mount
+command: >-
+  python run.py --parser paddle --input "${{inputs.pdfs}}"
+  --models "${{inputs.models}}"
+  --output "${{outputs.results}}"
+environment_variables:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_OFFLINE: '1'
+  # Use the base image's Python for the server, and Azure's Conda for the client.
+  PADDLE_SERVER_PYTHON: /usr/local/bin/python
+  PADDLE_SERVER_CLI: /usr/local/bin/paddleocr
+resources:
+  instance_count: 1
+  shm_size: 64g

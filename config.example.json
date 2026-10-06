@@ -1,0 +1,7 @@
+{
+  "subscription_id": "56539498-d3d8-4a3b-92f4-f3b098a11d1e",
+  "resource_group": "continuous_review_ms_and_ucl",
+  "workspace": "EPPI_DEV",
+  "tenant_id": "f870e5ae-5521-4a94-b9ff-cdde7d36dd35",
+  "endpoint": "eppi-pdf-parsers-ccaesjm"
+}

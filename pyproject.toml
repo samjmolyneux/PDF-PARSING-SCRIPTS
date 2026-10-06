@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-parsing-scripts"
+version = "0.1.0"
+description = "Local command-line clients for the team's Azure ML PDF parsers"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "azure-ai-ml>=1.32.0,<2",
+    "azure-identity>=1.19.0,<2",
+]
+
+[project.optional-dependencies]
+admin = ["huggingface-hub>=1.0,<2"]
+
+[project.scripts]
+run-mineru = "pdf_parsers.mineru:main"
+run-paddle = "pdf_parsers.paddle:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["pdf_parsers*"]
+namespaces = false

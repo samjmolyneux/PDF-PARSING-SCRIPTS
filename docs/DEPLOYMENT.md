@@ -1,0 +1,506 @@
+# Administrator setup
+
+These are instructions for you to run. Nothing has been deployed, uploaded or
+submitted to Azure by this implementation. The existing A100 was inspected
+read-only to identify its commands and package versions. Setup downloads model
+weights from the official Hugging Face repositories and needs no access to that
+machine.
+
+The design is one batch endpoint with two pipeline deployments, `mineru` and
+`paddle`, on a shared A100 cluster. Each invocation processes one folder on one
+GPU. The cluster scales from zero to one node and returns to zero when idle.
+The endpoint remains registered while the GPU is off. Azure supports this
+[pipeline batch deployment pattern](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-use-batch-pipeline-deployments?view=azureml-api-2).
+
+## 1. Prepare the configuration and administrator tools
+
+Use Bash on Linux, macOS, or Windows through WSL for the administrator scripts.
+Colleagues only need Python; their scripts work on Windows, macOS and Linux.
+Install Python 3.10+ and the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
+From the repository root:
+
+```sh
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install '.[admin]'
+cp config.example.json config.json
+az login --tenant f870e5ae-5521-4a94-b9ff-cdde7d36dd35
+az extension add --name ml --upgrade
+```
+
+The `admin` extra adds the Hugging Face download library. This installation
+supports the administrator Python scripts and creates
+the `run-mineru` and `run-paddle` console commands. Administrator helper scripts
+still run from the repository because they use its Azure definitions and model
+download directories. The client commands can run from any folder; their default
+configuration, receipt and result paths are relative to that working folder.
+
+Review `config.json`. The supplied values came from the open Azure ML tab:
+
+| Setting | Value |
+| --- | --- |
+| Subscription | `56539498-d3d8-4a3b-92f4-f3b098a11d1e` |
+| Resource group | `continuous_review_ms_and_ucl` |
+| Workspace | `EPPI_DEV` |
+| Region | `westeurope` |
+| New endpoint | `eppi-pdf-parsers-ccaesjm` |
+| Datastore | Workspace's existing default datastore |
+| New cluster | `pdf-parsers-a100` |
+| VM size | `Standard_NC24ads_A100_v4` |
+
+The endpoint name can be changed in `config.json`; the administrator scripts
+override the YAML endpoint name with that value. The fixed cluster/container
+names are also used in the YAML and administrator scripts; change all references
+if you choose different names.
+
+An administrator needs permission to create Azure ML resources, create a storage
+container and assign roles. Obtain the
+**object ID of the team's Microsoft Entra security group**. Workspace membership
+alone does not necessarily grant Blob Storage access.
+
+Check West Europe quota and capacity for the NCads A100 v4 family: this size uses
+24 vCPUs and one A100 per node. Existing compute instances also consume applicable
+quota. The existing `sam-a100` is an interactive **compute instance**; the batch
+deployment uses the new **compute cluster**.
+
+Use the workspace's existing network requirements. Private storage/workspaces
+require the submitting machine and compute to have the appropriate network
+access. These scripts do not change firewall or private endpoint settings.
+
+## 2. Download the official model weights
+
+Run these commands from this repository on your own computer or another machine
+with internet access and enough disk space. No GPU, parser installation, Azure
+login or access to the old A100 is needed for this step:
+
+```sh
+python admin/download_models.py --parser mineru
+python admin/download_models.py --parser paddle
+```
+
+The helper downloads these official repositories at fixed commit revisions:
+
+| Repository | Revision |
+| --- | --- |
+| [opendatalab/PDF-Extract-Kit-1.0](https://huggingface.co/opendatalab/PDF-Extract-Kit-1.0/tree/ed6b654c018d742e65a17671e379c5e6ecc87ec9) | `ed6b654c018d742e65a17671e379c5e6ecc87ec9` |
+| [opendatalab/MinerU2.5-Pro-2605-1.2B](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B/tree/bff20d4ae2bf202df9f45284b4d43681555a97ed) | `bff20d4ae2bf202df9f45284b4d43681555a97ed` |
+| [PaddlePaddle/PP-DocLayoutV3](https://huggingface.co/PaddlePaddle/PP-DocLayoutV3/tree/241f8bdfc77a7c7bee915a5057aaee58c235a8d3) | `241f8bdfc77a7c7bee915a5057aaee58c235a8d3` |
+| [PaddlePaddle/PaddleOCR-VL-1.6](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6/tree/c5630abae1d940eafe0697512a0325494b02ab42) | `c5630abae1d940eafe0697512a0325494b02ab42` |
+
+`MODELS` in `admin/download_models.py` defines the repository IDs, revisions and
+file selection. MinerU's pipeline selection follows its
+[3.3.1 downloader](https://github.com/opendatalab/MinerU/blob/mineru-3.3.1-released/mineru/cli/models_download.py),
+avoiding unrelated weights in the shared PDF-Extract-Kit repository. The other
+three repositories are downloaded in full, including configurations/tokenizers.
+The two MinerU revisions preserve those recorded during the original inspection.
+The Paddle revisions were verified from the official repositories on 6 October
+2026; they have not been compared byte-for-byte with the old machine's caches.
+
+Allow about **4.9 GB for MinerU and 2.1 GB for Paddle**, plus spare disk space for
+temporary downloads and uploads. These sizes are based on repository metadata.
+The result has the layout the workers already expect:
+
+```text
+models/
+├── mineru/
+│   ├── pipeline/models/...
+│   └── vlm/...
+└── paddle/official_models/
+    ├── PP-DocLayoutV3/...
+    └── PaddleOCR-VL-1.6/...
+```
+
+The script uses Hugging Face's
+[`snapshot_download` with `local_dir`](https://huggingface.co/docs/huggingface_hub/guides/download#download-files-to-a-local-folder),
+which writes real files and keeps its download metadata in `.cache/huggingface/`
+inside each destination. If a download is interrupted, rerun the same command
+with the same revisions and destination; the library reuses completed files.
+Register the folders only after the script reports `Download complete`.
+There is no custom retry loop or manifest to maintain.
+
+`--models-dir /path/to/models` changes the parent directory. If you use it, also
+update `path` in the corresponding `models/*.yml` before registration. When
+changing revisions, use a fresh destination so files removed upstream cannot
+remain from an older download. Do not put source PDFs inside the model folders.
+
+The generated `models/mineru/` and `models/paddle/` directories are excluded from
+Git. The small `models/*.yml` definitions describe the versioned Azure ML model
+assets. Downloading does not upload anything to Azure; the registration step
+below uploads these folders. Jobs then use Azure's stored copy of the weights.
+
+## 3. Create compute and configure team access
+
+Review `azure/compute.yml` and `admin/setup_storage.sh`. Then run:
+
+```sh
+bash admin/setup_storage.sh --apply TEAM_ENTRA_GROUP_OBJECT_ID
+```
+
+Replace the last argument with the actual group object ID. Without `--apply`
+and a group ID the script only prints usage. The script creates:
+
+- An A100 cluster: minimum 0 nodes, maximum 1, idle scale-down after 120 seconds.
+- `AzureML Data Scientist` on the workspace for the team group, and
+  `Storage Blob Data Contributor` on the existing default datastore's container
+  for that group.
+- `Storage Blob Data Reader` on the workspace storage account for the cluster's
+  managed identity, plus `Storage Blob Data Contributor` on the default container.
+
+No new storage container or datastore is created. Azure's SDK uploads local
+folders to the workspace default datastore, and jobs use it for their output.
+The script expects an Azure Blob default datastore in the workspace's own storage
+account; it stops before changing resources if that is not the configuration.
+For a different datastore arrangement, configure compute and access manually.
+
+Role changes may take time to propagate. These are standard team roles; the
+workspace role grants broader ML authoring permissions than endpoint invocation
+alone. If your organisation requires an invocation-only custom role, use the
+[documented batch invocation permissions](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-authenticate-batch-endpoint?view=azureml-api-2)
+in place of that role assignment. Team members can read and write each other's
+run data under this agreed shared-data design. These Blob roles also cover other
+files already in the default container, not just this project's runs. Runtime
+data access also requires
+the [compute identity's storage access](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-access-data-batch-endpoints-jobs?view=azureml-api-2).
+
+This step creates a cluster definition with zero minimum nodes; it does not
+submit a parsing job. Rerunning it reapplies the settings in `azure/compute.yml`.
+
+## 4. Register environments, models and deployments
+
+There are two files per environment, following Azure's
+[image plus Conda YAML pattern](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-manage-environments-v2?view=azureml-api-2):
+
+| File | What to edit |
+| --- | --- |
+| `environments/mineru/environment.yml` | Azure environment name/version and base image |
+| `environments/mineru/conda.yml` | Python version and MinerU package versions |
+| `environments/paddle/environment.yml` | Azure environment name/version and pinned Paddle server image |
+| `environments/paddle/conda.yml` | Python version and Paddle client package versions |
+| `models/mineru.yml`, `models/paddle.yml` | Model asset name/version and local download path |
+| `azure/*-command.yml` | Environment version, worker arguments and runtime variables |
+| `azure/*-pipeline.yml` | Model version used by that parser's job |
+
+There are no custom Dockerfiles to maintain. Azure still builds a container from
+the base image plus Conda dependencies. Its fresh Conda environment does not
+inherit Python packages installed in the base image, so the YAML includes the
+required Python dependencies explicitly.
+
+Preview either registration locally; these commands do not sign in or connect
+to Azure and do not need the model files:
+
+```sh
+python admin/register_environments.py
+python admin/register_models.py
+```
+
+Register independently when desired, using your `az login` session:
+
+```sh
+python admin/register_environments.py --parser mineru --apply
+python admin/register_models.py --parser mineru --apply
+```
+
+For initial setup, register both model folders from the repository copy
+containing the downloaded files:
+
+```sh
+python admin/register_models.py --apply
+```
+
+Then deploy from any repository copy; local model files are no longer needed:
+
+```sh
+bash admin/deploy.sh --apply
+```
+
+This registers environments and pipeline components and creates the endpoint and
+deployments. It does not register models or invoke a job. Model registration is
+an explicit administrator action for initial setup or a new weight version.
+Jobs reference the already registered version; colleagues never upload weights.
+Both clients explicitly select their deployment, so no default deployment is
+required. The command follows Azure's
+[batch deployment CLI](https://learn.microsoft.com/en-us/cli/azure/ml/batch-deployment?view=azure-cli-latest).
+
+Model weights are separate from the environment images. Each command job gets a
+pinned model version as a `custom_model` input in `download` mode. This can add
+startup time and requires disk space, but changing packages no longer requires
+uploading weights. The client submits the PDF folder; model selection is part
+of the registered pipeline. The worker configures paths from the downloaded
+asset rather than relying on `/opt/models`.
+
+Paddle retains the vendor server's original Python environment. Azure's new
+Conda environment runs the layout/export client. The worker starts the server
+with its base-image Python and removes client Conda paths from the server's
+environment; it runs the client with the job's Python. `PADDLE_SERVER_PYTHON` and
+`PADDLE_SERVER_CLI` in `azure/paddle-command.yml` make these paths explicit.
+The exact image's public registry metadata confirms Python 3.10.16 installed
+under `/usr/local`, PaddleOCR 3.6.0 and PaddleX 3.6.1 for the **server**. These are
+deliberately separate from the client pins (Python 3.12, PaddleOCR 3.7.0 and
+PaddleX 3.7.2). The `/usr/local/bin` paths follow that metadata and the vendor's
+[server Dockerfile](https://github.com/PaddlePaddle/PaddleX/blob/develop/deploy/genai_vllm_server_docker/Dockerfile).
+Runtime startup still needs the smoke test; metadata inspection does not run the
+image. Missing executables fail with a clear error in `report.json`. The worker
+starts the server directly in the Azure job container.
+
+Check **Endpoints → Batch endpoints** for successful provisioning, and
+**Environments** for image build status/logs. A registered environment does not
+by itself establish that its image has built successfully; a build may be
+triggered when the environment is first used. Image builds need access to the
+base registries and package indexes referenced by the YAML files. The existing
+workspace's registry/build permissions and compute GPU drivers need verification
+in the smoke test. These image builds have not been run here.
+
+## 5. Smoke-test before handing it to colleagues
+
+This is the first step that intentionally runs paid GPU inference. Use a few
+representative PDFs in one flat folder, including several short PDFs and a
+longer document. On a colleague-style client installation, run:
+
+```sh
+run-mineru ./smoke-pdfs --output ./smoke-mineru
+run-paddle ./smoke-pdfs --no-wait
+run-paddle --resume runs/RECEIPT_PRINTED_ABOVE.json --output ./smoke-paddle
+```
+
+Check that each report covers every submitted filename and that the
+exports match the current manual process. MinerU's whole export directory is
+retained, including images and visualisation files. Paddle saves JSON, Markdown,
+Word and the accompanying assets produced by those export methods.
+
+In a separate small test, include one corrupt PDF and one good PDF. Confirm the
+job returns failure, the client downloads any available results and native logs,
+and the report does not claim that unconfirmed documents succeeded. The parser
+may abort the batch; completing the good PDF is not guaranteed. No document is
+automatically retried. Also add a text file and a subfolder with another PDF to
+the local input folder; confirm only the PDFs directly inside it are submitted.
+
+Compare elapsed time and GPU memory use with the original manual folder run on
+the same PDFs. Native concurrency is enabled, but throughput and memory use have
+not been measured for this deployment. Confirm Paddle keeps exports separated by
+PDF and still creates merged JSON, Markdown and Word files with their assets.
+
+After `Submitted` prints, stop the local client or close the laptop and retrieve
+with `--resume`. Confirm there is only one Azure job. After jobs finish, verify
+the cluster returns to zero nodes. Then share the repository and `config.json`.
+No model weights, Azure keys or GPU packages are needed on colleagues' machines.
+
+While a batch is starting or running, try submitting through the other parser
+command from a colleague's account. Confirm it reports the existing job name and
+status without uploading or submitting anything. Confirm `--resume` still works.
+
+## Preserved parser configuration
+
+These direct package versions were read from the working A100 environments:
+
+| Parser | Versions |
+| --- | --- |
+| MinerU | MinerU 3.3.1; vLLM 0.21.0; PyTorch 2.11.0; Transformers 4.57.6 |
+| Paddle | PaddleOCR 3.7.0; PaddleX 3.7.2; PaddlePaddle GPU 3.3.1, CUDA 13.0 wheels |
+
+MinerU keeps the existing flags:
+
+```sh
+mineru -p INPUT -o OUTPUT -m ocr -b hybrid-engine --effort high \
+  -l en -f true -t true --image-analysis true
+```
+
+This command receives the entire input folder. MinerU starts/stops its own API
+server and schedules document tasks concurrently (three by default in the pinned
+version). We do not override that concurrency or manage a separate MinerU server.
+Its behaviour is based on
+[MinerU's pinned 3.3.1 CLI](https://github.com/opendatalab/MinerU/blob/mineru-3.3.1-released/docs/en/usage/cli_tools.md).
+
+Paddle keeps `pipeline_version="v1.6"`, `vllm-server`,
+`PaddleOCR-VL-1.6-0.9B`, `use_doc_unwarping=False`, chart recognition,
+OCR of image blocks, content formatting, and GPU 0. Restructuring merges tables,
+relevels titles and concatenates pages before JSON/Markdown/Word export.
+`workers/paddle_batch.py` constructs one pipeline and calls `predict_iter()` once
+with all PDF paths, preserving native cross-document batching. It gathers and
+exports one document at a time as results arrive, rather than accumulating the
+whole batch in memory. The output grouping loop does not serialize PDF inference.
+The server uses the exact vendor image digest inspected on the existing A100,
+recorded in `environments/paddle/environment.yml`, with its existing default memory
+settings. Only local model paths and server startup coordination are added.
+
+Direct package pins and fixed model revisions reduce drift; transitive dependencies
+and the tagged MinerU base image are not a complete environment lock. After the
+smoke test, retain the built image digest and environment/model version references.
+Reuse that registered environment for jobs instead of rebuilding on every run.
+
+## Failures, time limits and result layout
+
+Before a new submission, the shared client uses
+`ml.batch_endpoints.list_jobs(endpoint_name=...)` to check both deployments on the
+configured endpoint. Any unfinished job blocks submission, including jobs still
+queued, preparing or cancelling. A failure to list jobs also stops submission.
+The check happens before the SDK upload and receipt creation; `--resume` skips it.
+This is a best-effort check, not a lock. Jobs can still queue if two submissions
+overlap before Azure lists either job, another client skips the check, or unrelated
+jobs use the cluster. It does not disable Azure's queue or enforce a spending cap.
+
+The client copies only the PDFs directly inside the selected local folder into a
+temporary folder. Azure's SDK uploads that PDF-only folder to the default datastore
+during endpoint invocation. Azure chooses the cloud paths; job details expose the input
+and output locations. Every invocation gets a new random run ID. Receipts in the
+local `runs/` folder record the chosen Azure job name before invocation, allowing
+recovery if its HTTP response is interrupted. `--resume` retrieves the same job;
+it does not resubmit PDFs. A receipt marked `submitting` can mean either an
+failed local copy, interrupted upload or a lost submission response. Check the recorded job name in
+Azure before submitting the folder again if `--resume` cannot find it.
+
+The local source folder may contain other files and subfolders: these are ignored,
+including `.amlignore` and `.gitignore` files. Selection is not recursive. The clean
+temporary upload folder contains only the selected PDFs, with their names preserved;
+the Azure worker still expects that flat PDF-only input. Filenames must be distinct
+without letter case, so outputs can be downloaded without case collisions. Use
+filenames suitable for the computers that will download the results.
+
+Local temporary copies need disk space for the selected PDFs. They are removed
+when submission returns or fails, without changing the originals. The receipt
+retains the original PDF filenames. Resume uses the existing cloud job and does
+not copy or upload local PDFs again. There is no per-document inference subprocess.
+
+`workers/run.py` calls MinerU once for the folder, or starts Paddle's vendor vLLM
+server once and runs the streaming Paddle client. The worker does not retry PDFs,
+restart the server on individual failures, or impose a per-PDF deadline. Paddle's
+server startup still has a 20-minute readiness limit. The Azure command job keeps
+its 24-hour execution limit (`86400` seconds) in `azure/*-pipeline.yml`. Native
+parser/network timeouts still apply. MinerU's task-result polling timeout is also
+set to 24 hours so its shorter default does not cut off long documents; it is not
+a per-PDF cancellation mechanism. Execution time does not include a promise
+about queue/startup time.
+
+Outputs are written directly to the mounted results directory:
+
+- `parser.log`: native parser messages and the worker traceback on an exception.
+  Native libraries may also write to Azure's job logs.
+- `server.log`: Paddle's separate vLLM server output (Paddle only).
+- `documents/`: every generated export. MinerU uses its native document directory
+  names; Paddle writes under `documents/PDF_STEM/` with JSON, Markdown, Word and assets.
+- `report.json`: the submitted PDFs, their confirmation status, and any batch error.
+
+Paddle updates the report after all pages and required exports for a document are
+saved. If its native iterator raises, already confirmed documents remain
+`succeeded`; the remainder stay `unconfirmed`. Some may have partial output.
+MinerU's public CLI supplies an overall exit status and human-readable errors,
+not a structured per-PDF manifest. After a successful CLI exit, the worker also
+checks for each PDF's Markdown and JSON exports, since MinerU can skip inputs it
+does not recognise. Missing exports remain `unconfirmed`. MinerU can shorten long
+output names; such documents may need manual checking even after a successful run.
+On any nonzero exit, all PDFs remain `unconfirmed`. Existing files alone do not
+prove completion, so check MinerU's native log before selecting PDFs to rerun.
+An unreadable input can abort MinerU's initial scan, and a native Paddle exception
+can stop its entire batch. Neither is automatically restarted by this worker.
+
+A cancelled job, lost node or whole-job timeout can leave an incomplete report.
+The client does not call that success. It downloads available files even for a
+failed Azure job. Resume only retrieves the same job; it never retries inference.
+The client uses `ml.jobs.download(..., output_name="results")`, falling back to
+the single child worker's output if the parent has no report. It flattens Azure's
+`named-outputs/results/` directory into the requested local destination. A fresh
+temporary download prevents an old local report from disguising missing results.
+Completion checks do not assess OCR quality.
+
+## Stored inputs and results
+
+This project does not configure automatic deletion or delete uploaded PDFs and
+cloud results after a run. Completed runs, failed runs and partial uploads remain
+in storage for manual cleanup. Storage usage and its associated cost can grow.
+
+Setup does not read or modify the storage account's existing deletion policies.
+Any policies already applied outside this project can still affect stored files.
+Automatic cleanup can be considered separately later.
+
+## Increase capacity or update the parsers
+
+You can increase the maximum later, subject to quota/capacity:
+
+```sh
+az ml compute update --name pdf-parsers-a100 --max-instances 2 \
+  --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV \
+  --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e
+```
+
+Also update `max_instances` in `azure/compute.yml` so a later setup run preserves
+the new maximum. Keep `min_instances: 0`. Two nodes allow two one-GPU jobs at once;
+each batch uses its parser's native batching/concurrency within one GPU. The current CLI busy check
+allows only one unfinished endpoint job, so it must also be adjusted before
+colleagues can use that extra concurrency through the CLI. Scheduling is controlled by
+Azure; this does not implement a strict FIFO queue. The
+[compute CLI](https://learn.microsoft.com/en-us/cli/azure/ml/compute?view=azure-cli-latest#az-ml-compute-update)
+supports this update without replacing the endpoint.
+
+### Changing environments or models
+
+To change only MinerU dependencies:
+
+1. Edit `environments/mineru/conda.yml` and bump `version` in its `environment.yml`
+   (currently `2`).
+2. Run `python admin/register_environments.py --parser mineru` to preview, then
+   repeat with `--apply` to register it.
+3. Update `environment` in `azure/mineru-command.yml` to that new version and
+   bump the command's version. Bump the pipeline version in
+   `azure/mineru-pipeline.yml` too, since it includes that command definition.
+4. Update `component` in `azure/mineru-deployment.yml` to the new pipeline version.
+   Register the pipeline and update the deployment using the commands below.
+
+```sh
+az ml component create -f azure/mineru-pipeline.yml \
+  --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e \
+  --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV
+az ml batch-deployment update -f azure/mineru-deployment.yml \
+  --endpoint-name eppi-pdf-parsers-ccaesjm \
+  --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e \
+  --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV
+```
+
+Use your configured endpoint name if changed. Substitute `paddle` for a Paddle
+update. Existing jobs retain their submitted configuration; smoke-test the new
+deployment before sharing it with colleagues. Keep the prior versions for rollback.
+
+To change weights, update the repository/revision in `admin/download_models.py`,
+then download to a fresh parent directory with
+`python admin/download_models.py --parser PARSER --models-dir /path/to/new-models`.
+Update `path` in `models/PARSER.yml` to `/path/to/new-models/PARSER` and bump its
+`version`, then register with
+`python admin/register_models.py --parser PARSER --apply`. Update the model input
+reference and bump the version in `azure/PARSER-pipeline.yml`, then update the
+deployment's pipeline reference. The environment can stay the same. Code or
+worker-argument changes need new command and pipeline versions; dependency
+changes also need a new environment version. Registered versions are not edited
+in place. The two `register_*.py` helpers never update an endpoint or submit a job.
+
+## Local checks and troubleshooting
+
+```sh
+python -m pip install '.[admin]'
+python -m unittest discover -s tests -v
+bash -n admin/setup_storage.sh admin/deploy.sh
+```
+
+Tests inject parser failures and interrupted submissions and mock Azure services.
+Definition checks use the Azure SDK schema loaders. They make no network calls
+and do not establish that Azure deployment or GPU parsing works. They were run
+with Python 3.12 and `azure-ai-ml` 1.35.1.
+
+| Symptom | Check |
+| --- | --- |
+| 403 uploading/downloading | Signed-in tenant/account, group membership, container Blob role, propagation and storage network access |
+| 403 invoking | Workspace role and tenant; endpoint/deployment names in `config.json` |
+| Parser endpoint is busy | The named job has not finished; try later or use `--resume` for an existing submission |
+| Cannot list endpoint jobs | Workspace job-read permissions, tenant and connectivity; the client will not submit when the check fails |
+| Job cannot mount storage | Cluster identity roles and storage networking; inspect Azure job logs |
+| Job stays queued | Cluster provisioning, quota, regional A100 capacity and other active jobs |
+| Environment fails to build | Build logs, Conda/pip resolution, registry/package-index access and free build space |
+| Model registration fails | Local weight directory, model version, available disk and workspace storage access |
+| Server fails to start | Paddle `server.log` or MinerU `parser.log`, image/driver compatibility and downloaded model paths |
+| Parser fails or PDFs are unconfirmed | `report.json` and `parser.log`; inspect partial exports before selecting PDFs to resubmit |
+| No report after a terminal job | Azure setup/job logs or missing/deleted output blobs; a stale local report is not accepted |
+| Submission response was lost | Use its receipt with `--resume`; inspect the recorded job name in Azure before submitting again |
+| Receipt stays `submitting` | Upload and submission share one SDK call; check the recorded job name before submitting again |
+
+Retaining the endpoint does not require an always-running GPU. There is no charge
+for the batch endpoint itself; compute used for jobs, storage, registry/builds
+and relevant data transfer can still incur charges. Your existing interactive
+`sam-a100` has its own billing/lifecycle, independent of this cluster. See
+[batch endpoint costs](https://learn.microsoft.com/en-us/azure/machine-learning/concept-endpoints-batch?view=azureml-api-2).
