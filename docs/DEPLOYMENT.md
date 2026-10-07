@@ -14,18 +14,15 @@ The endpoint remains registered while the GPU is off. Azure supports this
 
 ## 1. Prepare the configuration and administrator tools
 
-Use Bash on Linux, macOS, or Windows through WSL for the administrator scripts.
-Colleagues only need Python; their scripts work on Windows, macOS and Linux.
-Install Python 3.10+ and the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
-From the repository root:
+All administrator scripts are Python and work on Windows, macOS and Linux.
+Colleagues only need Python and the client package.
+Activate your existing Conda environment with Python 3.10+ (Python 3.12 is
+recommended). Install the [Azure CLI](https://pypi.org/project/azure-cli/) and the
+administrator tools into that environment. From the repository root:
 
 ```sh
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install '.[admin]'
-cp config.example.json config.json
+python -m pip install azure-cli '.[admin]'
 az login --tenant f870e5ae-5521-4a94-b9ff-cdde7d36dd35
-az extension add --name ml --upgrade
 ```
 
 The `admin` extra adds the Hugging Face download library. This installation
@@ -49,14 +46,16 @@ Review `config.json`. The supplied values came from the open Azure ML tab:
 | VM size | `Standard_NC24ads_A100_v4` |
 
 The endpoint name can be changed in `config.json`; the administrator scripts
-override the YAML endpoint name with that value. The fixed cluster/container
-names are also used in the YAML and administrator scripts; change all references
-if you choose different names.
+override the YAML endpoint name with that value. The cluster name is also used
+in the compute and deployment YAML files; change those references together if
+you choose a different cluster name.
 
-An administrator needs permission to create Azure ML resources, create a storage
-container and assign roles. Obtain the
-**object ID of the team's Microsoft Entra security group**. Workspace membership
-alone does not necessarily grant Blob Storage access.
+An administrator needs permission to create compute and register/deploy Azure ML
+assets in the existing workspace. The endpoint, deployments and compute belong
+to `EPPI_DEV`, within resource group `continuous_review_ms_and_ucl`. Inputs and
+outputs use the workspace's existing default datastore. Access is managed
+through the workspace's existing administration; these scripts do not create
+storage resources, request a team group ID or assign roles.
 
 Check West Europe quota and capacity for the NCads A100 v4 family: this size uses
 24 vCPUs and one A100 per node. Existing compute instances also consume applicable
@@ -71,7 +70,8 @@ access. These scripts do not change firewall or private endpoint settings.
 
 Run these commands from this repository on your own computer or another machine
 with internet access and enough disk space. No GPU, parser installation, Azure
-login or access to the old A100 is needed for this step:
+login or access to the old A100 is needed for this step. Run only the command for
+each parser you intend to deploy:
 
 ```sh
 python admin/download_models.py --parser mineru
@@ -128,42 +128,34 @@ Git. The small `models/*.yml` definitions describe the versioned Azure ML model
 assets. Downloading does not upload anything to Azure; the registration step
 below uploads these folders. Jobs then use Azure's stored copy of the weights.
 
-## 3. Create compute and configure team access
+## 3. Create the compute cluster
 
-Review `azure/compute.yml` and `admin/setup_storage.sh`. Then run:
+Review `azure/compute.yml` and `admin/setup_compute.py`. Then run:
 
 ```sh
-bash admin/setup_storage.sh --apply TEAM_ENTRA_GROUP_OBJECT_ID
+python admin/setup_compute.py --apply
 ```
 
-Replace the last argument with the actual group object ID. Without `--apply`
-and a group ID the script only prints usage. The script creates:
+The helper loads `azure/compute.yml`, reads the workspace details from
+`config.json`, and uses the Azure ML Python SDK with your existing `az login`
+session to apply the compute definition. It waits for Azure to finish before
+reporting success. Without `--apply`, it previews the cluster name, VM size and
+node limits locally. Use `--config /path/to/config.json` for another configuration.
+The cluster has a zero-node minimum, one-node maximum and a 120-second idle
+scale-down. Its system-assigned identity remains part of the compute definition;
+the helper assigns no roles to it.
 
-- An A100 cluster: minimum 0 nodes, maximum 1, idle scale-down after 120 seconds.
-- `AzureML Data Scientist` on the workspace for the team group, and
-  `Storage Blob Data Contributor` on the existing default datastore's container
-  for that group.
-- `Storage Blob Data Reader` on the workspace storage account for the cluster's
-  managed identity, plus `Storage Blob Data Contributor` on the default container.
+Compute setup is separate from endpoint deployment and submits no parsing job.
+Rerunning it reapplies the settings in `azure/compute.yml`.
 
-No new storage container or datastore is created. Azure's SDK uploads local
-folders to the workspace default datastore, and jobs use it for their output.
-The script expects an Azure Blob default datastore in the workspace's own storage
-account; it stops before changing resources if that is not the configuration.
-For a different datastore arrangement, configure compute and access manually.
-
-Role changes may take time to propagate. These are standard team roles; the
-workspace role grants broader ML authoring permissions than endpoint invocation
-alone. If your organisation requires an invocation-only custom role, use the
-[documented batch invocation permissions](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-authenticate-batch-endpoint?view=azureml-api-2)
-in place of that role assignment. Team members can read and write each other's
-run data under this agreed shared-data design. These Blob roles also cover other
-files already in the default container, not just this project's runs. Runtime
-data access also requires
-the [compute identity's storage access](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-access-data-batch-endpoints-jobs?view=azureml-api-2).
-
-This step creates a cluster definition with zero minimum nodes; it does not
-submit a parsing job. Rerunning it reapplies the settings in `azure/compute.yml`.
+Azure's SDK uploads PDFs to the existing default datastore, and jobs use that
+datastore for their outputs. Keep the workspace's existing access arrangements.
+A credential-based datastore can use its stored credentials through authorised
+workspace access; an identity-based datastore requires storage access for the
+identity being used. If the smoke test reports an access error, have the
+workspace administrator resolve the missing access through normal Azure
+administration. See [Azure ML data authentication](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-administrate-data-authentication?view=azureml-api-2)
+and [batch invocation permissions](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-authenticate-batch-endpoint?view=azureml-api-2).
 
 ## 4. Register environments, models and deployments
 
@@ -185,23 +177,16 @@ the base image plus Conda dependencies. Its fresh Conda environment does not
 inherit Python packages installed in the base image, so the YAML includes the
 required Python dependencies explicitly.
 
-Preview either registration locally; these commands do not sign in or connect
-to Azure and do not need the model files:
+Preview the parser deployment or model registration locally; these commands do
+not sign in or connect to Azure and do not need the model files:
 
 ```sh
-python admin/register_environments.py
+python admin/deploy_parsers.py
 python admin/register_models.py
 ```
 
-Register independently when desired, using your `az login` session:
-
-```sh
-python admin/register_environments.py --parser mineru --apply
-python admin/register_models.py --parser mineru --apply
-```
-
 For initial setup, register both model folders from the repository copy
-containing the downloaded files:
+containing the downloaded files, using your `az login` session:
 
 ```sh
 python admin/register_models.py --apply
@@ -210,16 +195,34 @@ python admin/register_models.py --apply
 Then deploy from any repository copy; local model files are no longer needed:
 
 ```sh
-bash admin/deploy.sh --apply
+python admin/deploy_parsers.py --apply
 ```
 
-This registers environments and pipeline components and creates the endpoint and
-deployments. It does not register models or invoke a job. Model registration is
+The default is both parsers. For a Paddle-only setup, register only Paddle's
+downloaded model folder and select Paddle when deploying:
+
+```sh
+python admin/register_models.py --parser paddle --apply
+python admin/deploy_parsers.py --parser paddle --apply
+```
+
+Use `--parser mineru` for MinerU alone, or `--parser both` for both. A selected
+deployment registers only that parser's environment and pipeline and creates its
+deployment under the shared endpoint. It does not create or update the other
+parser's environment, pipeline or deployment, or remove an existing deployment.
+Environment registration is included in `deploy_parsers.py`; it has no separate
+helper. The script reads `config.json`, uses your `az login` session, and waits
+for the endpoint and deployment operations to finish before reporting success.
+Use `--config /path/to/config.json` for another workspace configuration.
+Without `--apply`, it previews the selected environments, pipelines, deployments
+and compute locally, without connecting to Azure or needing model files.
+
+Deployment does not register models or invoke a job. Model registration is
 an explicit administrator action for initial setup or a new weight version.
 Jobs reference the already registered version; colleagues never upload weights.
 Both clients explicitly select their deployment, so no default deployment is
-required. The command follows Azure's
-[batch deployment CLI](https://learn.microsoft.com/en-us/cli/azure/ml/batch-deployment?view=azure-cli-latest).
+required. The script uses the Azure ML Python SDK's
+[pipeline batch deployment workflow](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-use-batch-pipeline-deployments?view=azureml-api-2).
 
 Model weights are separate from the environment images. Each command job gets a
 pinned model version as a `custom_model` input in `download` mode. This can add
@@ -416,6 +419,7 @@ Automatic cleanup can be considered separately later.
 You can increase the maximum later, subject to quota/capacity:
 
 ```sh
+az extension add --name ml --upgrade
 az ml compute update --name pdf-parsers-a100 --max-instances 2 \
   --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV \
   --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e
@@ -436,25 +440,19 @@ To change only MinerU dependencies:
 
 1. Edit `environments/mineru/conda.yml` and bump `version` in its `environment.yml`
    (currently `2`).
-2. Run `python admin/register_environments.py --parser mineru` to preview, then
-   repeat with `--apply` to register it.
-3. Update `environment` in `azure/mineru-command.yml` to that new version and
+2. Update `environment` in `azure/mineru-command.yml` to that new version and
    bump the command's version. Bump the pipeline version in
    `azure/mineru-pipeline.yml` too, since it includes that command definition.
-4. Update `component` in `azure/mineru-deployment.yml` to the new pipeline version.
-   Register the pipeline and update the deployment using the commands below.
+3. Update `component` in `azure/mineru-deployment.yml` to the new pipeline version.
+4. Preview, then apply the parser deployment. This also registers the changed
+   environment and pipeline:
 
 ```sh
-az ml component create -f azure/mineru-pipeline.yml \
-  --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e \
-  --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV
-az ml batch-deployment update -f azure/mineru-deployment.yml \
-  --endpoint-name eppi-pdf-parsers-ccaesjm \
-  --subscription 56539498-d3d8-4a3b-92f4-f3b098a11d1e \
-  --resource-group continuous_review_ms_and_ucl --workspace-name EPPI_DEV
+python admin/deploy_parsers.py --parser mineru
+python admin/deploy_parsers.py --parser mineru --apply
 ```
 
-Use your configured endpoint name if changed. Substitute `paddle` for a Paddle
+The endpoint name comes from `config.json`. Substitute `paddle` for a Paddle
 update. Existing jobs retain their submitted configuration; smoke-test the new
 deployment before sharing it with colleagues. Keep the prior versions for rollback.
 
@@ -465,17 +463,18 @@ Update `path` in `models/PARSER.yml` to `/path/to/new-models/PARSER` and bump it
 `version`, then register with
 `python admin/register_models.py --parser PARSER --apply`. Update the model input
 reference and bump the version in `azure/PARSER-pipeline.yml`, then update the
-deployment's pipeline reference. The environment can stay the same. Code or
-worker-argument changes need new command and pipeline versions; dependency
+deployment's pipeline reference and run
+`python admin/deploy_parsers.py --parser PARSER --apply`. The environment can
+stay the same. Code or worker-argument changes need new command and pipeline versions; dependency
 changes also need a new environment version. Registered versions are not edited
-in place. The two `register_*.py` helpers never update an endpoint or submit a job.
+in place. Model registration only uploads weights; `deploy_parsers.py` applies
+the environment, pipeline and endpoint deployment. Neither submits a parsing job.
 
 ## Local checks and troubleshooting
 
 ```sh
 python -m pip install '.[admin]'
 python -m unittest discover -s tests -v
-bash -n admin/setup_storage.sh admin/deploy.sh
 ```
 
 Tests inject parser failures and interrupted submissions and mock Azure services.
@@ -485,11 +484,11 @@ with Python 3.12 and `azure-ai-ml` 1.35.1.
 
 | Symptom | Check |
 | --- | --- |
-| 403 uploading/downloading | Signed-in tenant/account, group membership, container Blob role, propagation and storage network access |
+| 403 uploading/downloading | Signed-in tenant/account, workspace permissions, default datastore authentication and storage network access; resolve access through the workspace administrator |
 | 403 invoking | Workspace role and tenant; endpoint/deployment names in `config.json` |
 | Parser endpoint is busy | The named job has not finished; try later or use `--resume` for an existing submission |
 | Cannot list endpoint jobs | Workspace job-read permissions, tenant and connectivity; the client will not submit when the check fails |
-| Job cannot mount storage | Cluster identity roles and storage networking; inspect Azure job logs |
+| Job cannot mount storage | Datastore credentials or the job/compute identity's storage access, plus storage networking; inspect Azure job logs |
 | Job stays queued | Cluster provisioning, quota, regional A100 capacity and other active jobs |
 | Environment fails to build | Build logs, Conda/pip resolution, registry/package-index access and free build space |
 | Model registration fails | Local weight directory, model version, available disk and workspace storage access |

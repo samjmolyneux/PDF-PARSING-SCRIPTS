@@ -11,19 +11,16 @@ Azure permissions, quota, image builds or deployment.
 
 ## For colleagues
 
-Install Python 3.10 or newer. Obtain this repository and the administrator's
-`config.json`, then install the package from the repository root in a virtual
-environment:
+Activate a Conda or other Python environment with Python 3.10 or newer. Obtain
+this repository and the administrator's `config.json`, then install the package
+from the repository root:
 
 ```sh
-python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
 python -m pip install .
 ```
 
 Installing the package registers both commands through `pyproject.toml`.
-Keep the virtual environment activated when using them. Run either parser;
+Keep that environment activated when using them. Run either parser;
 the first run opens the Microsoft sign-in page:
 
 ```sh
@@ -105,7 +102,8 @@ in another folder. These checks do not assess OCR quality.
 
 ## Storage and cost
 
-- Team access is governed by Azure ML and Blob Storage roles.
+- Access uses the existing workspace roles and default datastore authentication.
+  The administrator scripts do not create groups or assign permissions.
 - Inputs and outputs use the workspace's existing default datastore. This
   project does not automatically delete them; cleanup is manual for now.
   Storage continues to accumulate until files are removed.
@@ -132,11 +130,15 @@ GPU environments are defined in readable YAML pairs:
 - `environments/paddle/environment.yml` and `conda.yml`: existing Paddle server image and separate client dependencies.
 - `models/mineru.yml` and `models/paddle.yml`: separately versioned model weights.
 - `azure/`: compute, commands, pipelines and batch deployments that connect them.
+- `admin/setup_compute.py`: reads `config.json` and applies `azure/compute.yml`
+  to the existing workspace; compute setup is separate from deployment.
+- `admin/deploy_parsers.py`: registers the selected environments and pipelines,
+  then creates or updates their deployments under the shared endpoint.
 
 Preview the registrations without contacting Azure:
 
 ```sh
-python admin/register_environments.py
+python admin/deploy_parsers.py
 python admin/register_models.py
 ```
 
@@ -151,14 +153,16 @@ python admin/download_models.py --parser paddle
 
 These commands download files locally; they need no GPU and do not upload to
 Azure. Follow the [administrator guide](docs/DEPLOYMENT.md) to register the
-downloaded folders and deploy.
+downloaded folders and deploy. Download and register only the parsers you need.
+Use `python admin/deploy_parsers.py --parser paddle --apply` for Paddle alone, or replace
+`paddle` with `mineru` or `both`. Omitting `--parser` deploys both.
 
 Model registration is separate from deployment: rerun it only when introducing a
 new model version. The repository IDs, revisions and file selection are defined
 in `admin/download_models.py`.
 
 The [administrator guide](docs/DEPLOYMENT.md#changing-environments-or-models)
-explains how to register one changed environment and update the deployment.
+explains how to update an environment and redeploy the selected parser.
 
 Dependencies, the minimum Python version and console commands are declared in
 `pyproject.toml`. The `admin` extra adds the Hugging Face download library;
