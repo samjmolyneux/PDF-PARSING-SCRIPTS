@@ -1,7 +1,7 @@
 $schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
 name: pdf-paddle
-version: '3'
-description: Paddle VL 1.6 server with a separate PaddleOCR 3.7.0 Conda client.
+version: '4'
+description: Paddle VL 1.6 server with a separate PaddleOCR 3.7.0 Conda client and Word export support.
 # The Dockerfile installs Conda before creating the client from conda.yml.
 build:
   path: .

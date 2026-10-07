@@ -10,6 +10,8 @@ dependencies:
   - pip:
       - paddleocr[doc-parser]==3.7.0
       - paddlex==3.7.2
+      # Paddle's Word export imports docx, which doc-parser does not install.
+      - python-docx==1.2.0
       # Direct official wheel fixes CUDA 13 as well as the Paddle version.
       # This environment runs on Linux x86_64; colleagues install pyproject.toml.
       - paddlepaddle-gpu @ https://paddle-whl.cdn.bcebos.com/stable/cu130/paddlepaddle-gpu/paddlepaddle_gpu-3.3.1-cp312-cp312-linux_x86_64.whl

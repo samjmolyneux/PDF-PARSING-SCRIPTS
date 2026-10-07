@@ -8,7 +8,7 @@ upload, job tracking and download code.
 `run-paddle` calls the Azure deployment named `paddle-vl`; `run-mineru` calls
 the deployment named `mineru`.
 
-**Paddle's startup fix still needs an Azure GPU smoke test.** See
+**Paddle's Word-export fix still needs an Azure image build and GPU smoke test.** See
 [the administrator guide](docs/DEPLOYMENT.md) for setup and validation. Local tests
 cannot verify GPU inference, Azure permissions, quota, image builds or deployment.
 
@@ -23,8 +23,9 @@ python -m pip install .
 ```
 
 Installing the package registers both commands through `pyproject.toml`.
-Keep that environment activated when using them. Run either parser;
-the first run opens the Microsoft sign-in page:
+Keep that environment activated when using them. Both commands first try your
+existing `az login` session. If Azure CLI is missing or cannot sign you in, they
+open the Microsoft sign-in page:
 
 ```sh
 run-mineru ./pdfs --output ./mineru-results
@@ -86,8 +87,10 @@ run-paddle --resume runs/RECEIPT.json --output ./paddle-results
 
 This waits for the existing job and downloads its results; it does not submit a
 new batch. Pressing Ctrl+C while waiting detaches the client without cancelling
-the Azure job. Use `--device-code` if browser login is unavailable, or `--az-login`
-to reuse an existing Azure CLI login. Everyone signs in with their own account.
+the Azure job. To choose a sign-in method explicitly, use `--browser-login` for
+browser sign-in, `--device-code` for a device code, or `--az-login` to require an
+existing Azure CLI login without browser fallback. Everyone signs in with their
+own account.
 
 There are **no automatic PDF retries or custom per-PDF time limits**. The whole
 job has a 24-hour execution limit; the parsers' own request timeouts still apply.

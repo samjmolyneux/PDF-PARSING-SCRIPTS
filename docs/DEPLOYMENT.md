@@ -290,19 +290,27 @@ installer release and package indexes referenced by the definitions. Check the
 build result before submitting PDFs. The existing workspace's registry/build
 permissions and compute GPU drivers need verification in the smoke test.
 
-### Apply the Paddle startup fix to an existing setup
+### Apply the Paddle Word-export fix to an existing setup
 
-This revision uses `paddle_vl_command:4` and `paddle_vl_pipeline:4`, with the
-existing `pdf-paddle:3` environment. It fixes `KeyError: 'PADDLE_SERVER_PYTHON'`
-by moving runtime environment variables from the command component to its
-pipeline job. A local regression test checks that the Azure SDK preserves them
-in the pipeline registration payload.
+This revision uses `pdf-paddle:4`, `paddle_vl_command:5` and
+`paddle_vl_pipeline:5`. It adds `python-docx==1.2.0` to the client's
+`environments/paddle/conda.yml` to fix `ModuleNotFoundError: No module named 'docx'`
+when Paddle calls `save_to_word()`. The pinned `paddleocr[doc-parser]` dependencies
+do not install this Word-export package automatically.
 
-The Dockerfile and environment version are unchanged, so this fix does not
-require a new image build. The model asset, endpoint, deployment name and
-compute are unchanged too. Version 3 of the image already addresses the older
-`/bin/sh: 1: conda: not found` build failure by installing Conda before creating
-the client.
+The Dockerfile also writes a tiny Word document in memory using the client
+Python during the build. A missing or broken `python-docx` installation will
+fail the build. This check needs no GPU or model weights; full Paddle exports
+still need the smoke test.
+
+This change requires a new environment image build. Upload the entire
+`environments/paddle/` build folder, including `Dockerfile` and `conda.yml`, and
+register it as `pdf-paddle:4`. After its build succeeds, deploy pipeline version 5
+so new jobs select the updated image. The model asset, endpoint, deployment name
+and compute are unchanged.
+
+The earlier fixes remain included: the Dockerfile installs Conda, and runtime
+environment variables are set on the pipeline's `parse` job.
 
 Once the local changes have been reviewed, preview and apply just Paddle:
 
@@ -312,10 +320,11 @@ python admin/deploy_parsers.py --parser paddle --apply
 ```
 
 If compute and `paddle-vl-models:1` are already registered, do not repeat compute
-setup or model download/registration. The failed Azure run used `pdf-paddle:3`
-and reached the Python worker, but stopped before launching the Paddle server.
-After applying this fix, submit a fresh two-PDF smoke test; the failed job keeps
-its old configuration. Server startup and GPU inference still need verification.
+setup or model download/registration. The latest failed Azure run used
+`pdf-paddle:3`: the server handled inference requests and the client saved
+Markdown and JSON, then failed on Word export. After building version 4 and
+deploying this fix, submit a fresh two-PDF smoke test; the failed job keeps its
+old configuration. Confirm that both PDFs have all exports, including `.docx`.
 
 ## 5. Smoke-test before handing it to colleagues
 
@@ -517,7 +526,7 @@ python admin/deploy_parsers.py --parser mineru --apply
 ```
 
 The endpoint name comes from `config.json`. Substitute `paddle` for a Paddle
-update (its environment is currently version `3`). Paddle's package list is still
+update (its environment is currently version `4`). Paddle's package list is still
 `environments/paddle/conda.yml`; change its Dockerfile only for the server image
 or the Conda setup steps. Existing jobs retain their submitted configuration; smoke-test the new
 deployment before sharing it with colleagues. Keep the prior versions for rollback.
@@ -557,8 +566,9 @@ with Python 3.12 and `azure-ai-ml` 1.35.1.
 | Job cannot mount storage | Datastore credentials or the job/compute identity's storage access, plus storage networking; inspect Azure job logs |
 | Job stays queued | Cluster provisioning, quota, regional A100 capacity and other active jobs |
 | Environment fails to build | Build logs, Conda/pip resolution, registry/package-index access and free build space |
-| Paddle build reports `conda: not found` | Version 2 used the server image without installing Conda; deploy the version 3 Docker build context and inspect its build log |
-| Paddle reports `KeyError: 'PADDLE_SERVER_PYTHON'` | Deploy pipeline version 4, which sets runtime variables under `jobs.parse.environment_variables`; this fix reuses environment version 3 |
+| Paddle build reports `conda: not found` | Version 2 used the server image without installing Conda; environment versions 3 and later install it in the Dockerfile |
+| Paddle reports `KeyError: 'PADDLE_SERVER_PYTHON'` | Pipeline versions 4 and later set runtime variables under `jobs.parse.environment_variables` |
+| Paddle reports `No module named 'docx'` | Build environment version 4 with `python-docx` in the client, then deploy pipeline version 5 and submit a fresh job |
 | Model registration fails | Local weight directory, model version, available disk and workspace storage access |
 | Server fails to start | Paddle `server.log` or MinerU `parser.log`, image/driver compatibility and downloaded model paths |
 | Parser fails or PDFs are unconfirmed | `report.json` and `parser.log`; inspect partial exports before selecting PDFs to resubmit |

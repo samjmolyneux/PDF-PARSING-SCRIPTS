@@ -1,10 +1,10 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: paddle_vl_command
-version: "4"
+version: "5"
 type: command
 is_deterministic: false
 code: ../workers
-environment: azureml:pdf-paddle:3
+environment: azureml:pdf-paddle:4
 inputs:
   models:
     type: custom_model

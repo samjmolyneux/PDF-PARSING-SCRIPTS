@@ -11,6 +11,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from azure.ai.ml import MLClient
+from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
+from azure.identity import CredentialUnavailableError
 from pdf_parsers import mineru, paddle
 from pdf_parsers.client import download_results
 
@@ -31,6 +33,10 @@ class ClientTests(unittest.TestCase):
         self.config = self.root / "config.json"
         self.config.write_text(json.dumps(config))
         self.ml = MagicMock()
+        self.ml_factory = MagicMock(return_value=self.ml)
+        self.azure_cli = MagicMock()
+        self.browser = MagicMock()
+        self.device_code = MagicMock()
         self.ml.batch_endpoints.list_jobs.return_value = []
         self.outputs = {}
         self.ml.jobs.list.return_value = []
@@ -70,8 +76,10 @@ class ClientTests(unittest.TestCase):
 
     def call(self, *args, parser="mineru"):
         with patch.object(sys, "argv", [f"run-{parser}", *map(str, args)]), \
-             patch("azure.ai.ml.MLClient", return_value=self.ml), \
-             patch("azure.identity.InteractiveBrowserCredential"), \
+             patch("azure.ai.ml.MLClient", self.ml_factory), \
+             patch("azure.identity.AzureCliCredential", self.azure_cli), \
+             patch("azure.identity.InteractiveBrowserCredential", self.browser), \
+             patch("azure.identity.DeviceCodeCredential", self.device_code), \
              contextlib.redirect_stdout(io.StringIO()) as output, \
              contextlib.redirect_stderr(io.StringIO()) as errors:
             code = {"mineru": mineru, "paddle": paddle}[parser].main()
@@ -91,6 +99,56 @@ class ClientTests(unittest.TestCase):
                   "documents": [{"input": "a.pdf", "status": "succeeded"}]}
         report.update(overrides)
         self.outputs["report.json"] = json.dumps(report).encode()
+
+    def test_default_reuses_working_cli_login(self):
+        self.submit()
+        self.azure_cli.assert_called_once_with(tenant_id="tenant")
+        self.azure_cli.return_value.get_token.assert_called_once_with("https://management.azure.com/.default")
+        self.assertIs(self.ml_factory.call_args.args[0], self.azure_cli.return_value)
+        self.browser.assert_not_called()
+
+    def test_default_falls_back_to_browser_when_cli_is_unavailable_or_expired(self):
+        for error in (CredentialUnavailableError("Please run az login"),
+                      ClientAuthenticationError("Login has expired")):
+            with self.subTest(error=type(error).__name__):
+                self.azure_cli.return_value.get_token.side_effect = error
+                code, message = self.call(self.inputs, "--no-wait")
+                self.assertEqual(code, 0, message)
+                self.browser.assert_called_with(tenant_id="tenant")
+                self.assertIs(self.ml_factory.call_args.args[0], self.browser.return_value)
+                self.assertIn("opening browser sign-in", message)
+                self.receipt().unlink()
+
+    def test_explicit_cli_login_does_not_fall_back(self):
+        self.ml.batch_endpoints.list_jobs.side_effect = ClientAuthenticationError("Please run az login")
+        code, message = self.call(self.inputs, "--no-wait", "--az-login")
+        self.assertEqual(code, 1)
+        self.assertIn("Please run az login", message)
+        self.assertIs(self.ml_factory.call_args.args[0], self.azure_cli.return_value)
+        self.browser.assert_not_called()
+        self.ml.batch_endpoints.invoke.assert_not_called()
+
+    def test_explicit_browser_login_skips_cli(self):
+        code, message = self.call(self.inputs, "--no-wait", "--browser-login")
+        self.assertEqual(code, 0, message)
+        self.assertIs(self.ml_factory.call_args.args[0], self.browser.return_value)
+        self.azure_cli.assert_not_called()
+        self.device_code.assert_not_called()
+
+    def test_explicit_device_code_skips_cli_and_browser(self):
+        code, message = self.call(self.inputs, "--no-wait", "--device-code")
+        self.assertEqual(code, 0, message)
+        self.assertIs(self.ml_factory.call_args.args[0], self.device_code.return_value)
+        self.azure_cli.assert_not_called()
+        self.browser.assert_not_called()
+
+    def test_workspace_permission_error_does_not_trigger_browser_fallback(self):
+        self.ml.batch_endpoints.list_jobs.side_effect = HttpResponseError("Forbidden: workspace access denied")
+        code, message = self.call(self.inputs, "--no-wait")
+        self.assertEqual(code, 1)
+        self.assertIn("workspace access denied", message)
+        self.browser.assert_not_called()
+        self.ml.batch_endpoints.invoke.assert_not_called()
 
     def test_submit_then_resume_downloads_without_uploading_or_invoking_again(self):
         receipt = self.submit()

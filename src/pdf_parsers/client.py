@@ -74,7 +74,10 @@ def report_success(report, receipt, status):
 def main(parser_name, argv=None):
     """Run the client; explicit arguments also allow calls from notebooks."""
     working_dir = Path.cwd()
-    cli = argparse.ArgumentParser(prog=f"run-{parser_name}", description=f"Run {parser_name} on Azure ML.")
+    cli = argparse.ArgumentParser(
+        prog=f"run-{parser_name}",
+        description=f"Run {parser_name} on Azure ML. Sign-in defaults to Azure CLI, then browser if unavailable.",
+    )
     source = cli.add_mutually_exclusive_group(required=True)
     source.add_argument("input", nargs="?", type=Path, help="Upload only PDFs directly inside this folder; ignore other files and subfolders")
     source.add_argument("--resume", type=Path, help="Receipt JSON from an already submitted job")
@@ -83,8 +86,9 @@ def main(parser_name, argv=None):
     cli.add_argument("--output", type=Path, help="Local results folder (default: results/RUN_ID)")
     cli.add_argument("--no-wait", action="store_true", help="Return once Azure has accepted the job")
     login = cli.add_mutually_exclusive_group()
-    login.add_argument("--device-code", action="store_true")
-    login.add_argument("--az-login", action="store_true", help="Use your existing az login session")
+    login.add_argument("--device-code", action="store_true", help="Sign in using a device code")
+    login.add_argument("--az-login", action="store_true", help="Use only your existing az login session")
+    login.add_argument("--browser-login", action="store_true", help="Sign in through the browser directly")
     args = cli.parse_args(argv)
     receipt_path = args.resume
     receipt = None
@@ -100,13 +104,23 @@ def main(parser_name, argv=None):
 
         # Lazy imports make --help and local tests independent of the Azure SDK.
         from azure.ai.ml import MLClient, Input
+        from azure.core.exceptions import ClientAuthenticationError
         from azure.identity import AzureCliCredential, DeviceCodeCredential, InteractiveBrowserCredential
 
-        credential = (
-            AzureCliCredential(tenant_id=config["tenant_id"]) if args.az_login
-            else DeviceCodeCredential(tenant_id=config["tenant_id"]) if args.device_code
-            else InteractiveBrowserCredential(tenant_id=config["tenant_id"])
-        )
+        if args.device_code:
+            credential = DeviceCodeCredential(tenant_id=config["tenant_id"])
+        elif args.browser_login:
+            credential = InteractiveBrowserCredential(tenant_id=config["tenant_id"])
+        else:
+            credential = AzureCliCredential(tenant_id=config["tenant_id"])
+            if not args.az_login:
+                # Fall back only for sign-in failures, before any workspace operations.
+                # This also catches CredentialUnavailableError (e.g. CLI not installed).
+                try:
+                    credential.get_token("https://management.azure.com/.default")
+                except ClientAuthenticationError:
+                    print("Azure CLI sign-in unavailable; opening browser sign-in.", flush=True)
+                    credential = InteractiveBrowserCredential(tenant_id=config["tenant_id"])
         ml = MLClient(credential, config["subscription_id"], config["resource_group"], config["workspace"])
         if receipt is None:
             # Check both parser deployments before upload. This is not a reservation:

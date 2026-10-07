@@ -29,7 +29,7 @@ class InstalledCliTests(unittest.TestCase):
                 result = self.command(name, "--help")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f"usage: {name}", result.stdout)
-                for option in ("--config", "--output", "--resume", "--no-wait"):
+                for option in ("--config", "--output", "--resume", "--no-wait", "--browser-login"):
                     self.assertIn(option, result.stdout)
         self.assertFalse(list(self.root.iterdir()))
 

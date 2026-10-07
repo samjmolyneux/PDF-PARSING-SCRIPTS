@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
 name: paddle_vl_pipeline
-version: '4'
+version: '5'
 type: pipeline
 inputs:
   pdfs:
