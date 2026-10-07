@@ -1,8 +1,8 @@
 $schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
 name: pdf-paddle
-version: '2'
-description: PaddleOCR 3.7.0 client over the existing isolated VL 1.6 server image.
-# Exact server image inspected on the A100. Conda installs only the client.
-# Registry metadata: server Python 3.10.16, PaddleOCR 3.6.0, PaddleX 3.6.1.
-image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server@sha256:5713fd30ab76094b7b6a20d95fd8e26fa9dc452bcc90ccb16f1fb056bd2a0f4d
-conda_file: ./conda.yml
+version: '3'
+description: Paddle VL 1.6 server with a separate PaddleOCR 3.7.0 Conda client.
+# The Dockerfile installs Conda before creating the client from conda.yml.
+build:
+  path: .
+  dockerfile_path: Dockerfile

@@ -1,37 +1,27 @@
 # Local todo
 
-- [ ] Simplify Paddle's client/server environment separation.
+- [ ] Validate Paddle's new image and client/server separation on Azure.
 
-  Prefer avoiding global activation of the client environment, so the server does
-  not need to undo its settings at startup.
+  Local definitions now use `environments/paddle/Dockerfile` to install Conda and
+  create the client environment at `/opt/client` from the existing `conda.yml`.
+  `pdf-paddle:3` builds this image without adding Azure's managed Conda environment.
+  Two launch scripts select the environments when the job starts:
 
-  Proposed design:
+  ```text
+  Client: activate /opt/client, then exec python run.py ...
+  Server: deactivate all Conda environments in a separate shell,
+          then exec /usr/local/bin/python ... genai_server ...
+  ```
 
-  1. Build an image containing Paddle's server installation and a separate Python
-     virtual environment for the client at `/opt/client`.
-  2. Configure Azure ML to use that image directly, without adding its managed
-     Conda environment.
-  3. Launch both programs through explicit interpreter paths:
+  Local checks with real Conda verified activation/deactivation, client isolation,
+  argument forwarding and process shutdown, using temporary copies of the launch
+  scripts with the container paths mapped to local test paths.
 
-     ```text
-     Client: /opt/client/bin/python run.py ...
-     Server: /usr/local/bin/python ... genai_server ...
-     ```
-
-  The client virtual environment would be used through its interpreter path,
-  without activation. Each interpreter would find its own installed packages,
-  while both processes inherit the image's normal environment variables. This
-  would remove the client Conda activation state that `server_environment()`
-  currently cleans up.
-
-  Building and validating the image requires additional work, but makes the
-  separation explicit at build time and simplifies the runtime code. Validate
-  both client execution and server startup/inference before removing the helper.
-
-  Using `conda deactivate` in a server-launch shell is a smaller possible change
-  to the current setup. Prefer the explicit image-and-interpreter design for the
-  final implementation, rather than depending on activation history or manually
-  reconstructing environment settings.
+  The image has not been built or run during the local implementation. Verify
+  the Azure image build, client execution and server startup/inference with the
+  two-PDF test, including server shutdown. The launch scripts now replace
+  `workers/run.py::server_environment()`; verify that Conda deactivation restores
+  the server's library paths correctly in the actual Azure image.
 
   Reference: [Azure ML environments from Docker images](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-manage-environments-v2?view=azureml-api-2#create-an-environment-from-a-docker-image).
 

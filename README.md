@@ -8,9 +8,9 @@ upload, job tracking and download code.
 `run-paddle` calls the Azure deployment named `paddle-vl`; `run-mineru` calls
 the deployment named `mineru`.
 
-**Setup is not deployed yet.** See [the administrator guide](docs/DEPLOYMENT.md)
-for the one-time setup and GPU smoke test. Local tests cannot verify GPU inference,
-Azure permissions, quota, image builds or deployment.
+**Paddle's revised image still needs an Azure build and GPU smoke test.** See
+[the administrator guide](docs/DEPLOYMENT.md) for setup and validation. Local tests
+cannot verify GPU inference, Azure permissions, quota, image builds or deployment.
 
 ## For colleagues
 
@@ -127,10 +127,15 @@ on the existing `sam-a100` compute instance.
 
 ## Development and administration
 
-GPU environments are defined in readable YAML pairs:
+GPU package lists remain in readable Conda YAML files:
 
 - `environments/mineru/environment.yml` and `conda.yml`: Azure image/version and MinerU dependencies.
-- `environments/paddle/environment.yml` and `conda.yml`: existing Paddle server image and separate client dependencies.
+- `environments/paddle/environment.yml`: tells Azure to build the adjacent Dockerfile.
+- `environments/paddle/Dockerfile`: extends the official Paddle server image with
+  Conda and a separate client environment at `/opt/client`.
+- `environments/paddle/conda.yml`: Python version and Paddle client dependencies.
+- `workers/start_paddle_client.sh` and `start_paddle_server.sh`: activate Conda
+  for the client and deactivate it in the separate server launch shell.
 - `models/mineru.yml` and `models/paddle.yml`: separately versioned model weights.
 - `azure/`: compute, commands, pipelines and batch deployments that connect them.
 - `admin/setup_compute.py`: reads `config.json` and applies `azure/compute.yml`

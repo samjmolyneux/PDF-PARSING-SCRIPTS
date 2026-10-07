@@ -159,15 +159,19 @@ and [batch invocation permissions](https://learn.microsoft.com/en-us/azure/machi
 
 ## 4. Register environments, models and deployments
 
-There are two files per environment, following Azure's
-[image plus Conda YAML pattern](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-manage-environments-v2?view=azureml-api-2):
+MinerU uses Azure's image-plus-Conda pattern. Paddle uses a Docker build context
+because its official server image does not provide the Conda command required
+by Azure's managed Conda build. Paddle's package list remains in `conda.yml`.
+Both are supported [Azure environment definitions](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-manage-environments-v2?view=azureml-api-2).
 
 | File | What to edit |
 | --- | --- |
 | `environments/mineru/environment.yml` | Azure environment name/version and base image |
 | `environments/mineru/conda.yml` | Python version and MinerU package versions |
-| `environments/paddle/environment.yml` | Azure environment name/version and pinned Paddle server image |
+| `environments/paddle/environment.yml` | Azure environment name/version and Docker build folder |
+| `environments/paddle/Dockerfile` | Pinned official Paddle server image, Conda installation and client environment creation |
 | `environments/paddle/conda.yml` | Python version and Paddle client package versions |
+| `workers/start_paddle_client.sh`, `start_paddle_server.sh` | Client Conda activation and server Conda deactivation at job startup |
 | `models/mineru.yml`, `models/paddle.yml` | Model asset name/version and local download path |
 | `azure/*-command.yml` | Environment version, worker arguments and runtime variables |
 | `azure/*-pipeline.yml` | Model version used by that parser's job |
@@ -177,10 +181,20 @@ The Paddle Azure asset names are `paddle-vl-models` (model), `paddle_vl_command`
 (deployment). Its environment remains `pdf-paddle`. The local parser selector is
 still `--parser paddle`, and colleagues still use `run-paddle`.
 
-There are no custom Dockerfiles to maintain. Azure still builds a container from
-the base image plus Conda dependencies. Its fresh Conda environment does not
-inherit Python packages installed in the base image, so the YAML includes the
-required Python dependencies explicitly.
+Paddle's Dockerfile performs six build steps:
+
+1. `FROM` selects the pinned official Paddle server image.
+2. `USER root` selects the container's administrator for installation.
+3. `ADD` downloads the fixed Miniforge installer from its official GitHub release.
+4. `RUN` installs Conda at `/opt/conda` without interactive prompts.
+5. `COPY` puts the local `conda.yml` into the image at `/tmp/client-conda.yml`.
+6. `RUN` creates the client environment at `/opt/client` from that YAML, then
+   removes Conda package caches. `&&` runs cleanup only after creation succeeds.
+
+These commands run during image construction. Azure jobs use the saved image;
+they do not reinstall Conda and the client packages on each invocation. The
+Dockerfile creates a separate environment without changing the server's Python
+installation. The YAML still explicitly lists the client's dependencies.
 
 Preview the parser deployment or model registration locally; these commands do
 not sign in or connect to Azure and do not need the model files:
@@ -236,11 +250,26 @@ uploading weights. The client submits the PDF folder; model selection is part
 of the registered pipeline. The worker configures paths from the downloaded
 asset rather than relying on `/opt/models`.
 
-Paddle retains the vendor server's original Python environment. Azure's new
-Conda environment runs the layout/export client. The worker starts the server
-with its base-image Python and removes client Conda paths from the server's
-environment; it runs the client with the job's Python. `PADDLE_SERVER_PYTHON` and
-`PADDLE_SERVER_CLI` in `azure/paddle-command.yml` make these paths explicit.
+Paddle retains the vendor server's original Python environment. The Dockerfile
+creates the layout/export client's Conda environment; activation happens when
+the job starts, through two short scripts uploaded with the worker code:
+
+1. `azure/paddle-command.yml` runs `bash start_paddle_client.sh`. This script
+   loads Conda's shell commands, activates `/opt/client`, and uses `exec python`
+   to replace the launch shell with the Python worker.
+2. When the worker needs the server, it starts `start_paddle_server.sh` in a
+   separate shell. That script loads Conda's shell commands and deactivates all
+   inherited Conda environments, including Conda's own `base` if active. This
+   only changes the server launch shell; the client stays in its environment.
+3. The server script uses `exec` to replace its shell with the original server
+   Python and CLI, supplied through `PADDLE_SERVER_PYTHON` and `PADDLE_SERVER_CLI`
+   in the command YAML. The worker keeps the server's process ID for readiness
+   checks and shutdown, including its vLLM child processes.
+
+The client and server run together in one container on the same GPU. The Python
+worker no longer rewrites `PATH`, library paths or Conda variables itself;
+Conda handles undoing its own activation. Runtime validation must confirm that
+the server receives the expected paths and can load its GPU libraries.
 The exact image's public registry metadata confirms Python 3.10.16 installed
 under `/usr/local`, PaddleOCR 3.6.0 and PaddleX 3.6.1 for the **server**. These are
 deliberately separate from the client pins (Python 3.12, PaddleOCR 3.7.0 and
@@ -252,11 +281,34 @@ starts the server directly in the Azure job container.
 
 Check **Endpoints → Batch endpoints** for successful provisioning, and
 **Environments** for image build status/logs. A registered environment does not
-by itself establish that its image has built successfully; a build may be
-triggered when the environment is first used. Image builds need access to the
-base registries and package indexes referenced by the YAML files. The existing
-workspace's registry/build permissions and compute GPU drivers need verification
-in the smoke test. These image builds have not been run here.
+by itself establish that its image has built successfully. Paddle's Docker
+build-context definition starts a build when registered; MinerU's image-plus-Conda
+definition may wait until first use. The deployment script does not wait for
+image build completion. Image builds need access to the base registries, GitHub
+installer release and package indexes referenced by the definitions. Check the
+build result before submitting PDFs. The existing workspace's registry/build
+permissions and compute GPU drivers need verification in the smoke test.
+
+### Apply this Paddle image fix to an existing setup
+
+This revision uses `pdf-paddle:3`, `paddle_vl_command:3` and
+`paddle_vl_pipeline:3`. It addresses the version 2 build failure
+`/bin/sh: 1: conda: not found` by installing Conda before creating the client.
+The model asset, endpoint, deployment name and compute are unchanged.
+
+Once the local changes have been reviewed, preview and apply just Paddle:
+
+```sh
+python admin/deploy_parsers.py --parser paddle
+python admin/deploy_parsers.py --parser paddle --apply
+```
+
+If compute and `paddle-vl-models:1` are already registered, do not repeat compute
+setup or model download/registration for this image change. In **EPPI_DEV →
+Environments → Custom environments → pdf-paddle → Version 3**, inspect **Build
+log** and wait for a successful build. Then use the two-PDF smoke test below.
+The version 3 image has not been built or run as part of the local code changes;
+successful local tests do not verify the package installation or GPU runtime.
 
 ## 5. Smoke-test before handing it to colleagues
 
@@ -458,7 +510,9 @@ python admin/deploy_parsers.py --parser mineru --apply
 ```
 
 The endpoint name comes from `config.json`. Substitute `paddle` for a Paddle
-update. Existing jobs retain their submitted configuration; smoke-test the new
+update (its environment is currently version `3`). Paddle's package list is still
+`environments/paddle/conda.yml`; change its Dockerfile only for the server image
+or the Conda setup steps. Existing jobs retain their submitted configuration; smoke-test the new
 deployment before sharing it with colleagues. Keep the prior versions for rollback.
 
 To change weights, update the repository/revision in `admin/download_models.py`,
@@ -496,6 +550,7 @@ with Python 3.12 and `azure-ai-ml` 1.35.1.
 | Job cannot mount storage | Datastore credentials or the job/compute identity's storage access, plus storage networking; inspect Azure job logs |
 | Job stays queued | Cluster provisioning, quota, regional A100 capacity and other active jobs |
 | Environment fails to build | Build logs, Conda/pip resolution, registry/package-index access and free build space |
+| Paddle build reports `conda: not found` | Version 2 used the server image without installing Conda; deploy the version 3 Docker build context and inspect its build log |
 | Model registration fails | Local weight directory, model version, available disk and workspace storage access |
 | Server fails to start | Paddle `server.log` or MinerU `parser.log`, image/driver compatibility and downloaded model paths |
 | Parser fails or PDFs are unconfirmed | `report.json` and `parser.log`; inspect partial exports before selecting PDFs to resubmit |

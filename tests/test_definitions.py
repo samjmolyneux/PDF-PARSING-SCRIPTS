@@ -18,9 +18,19 @@ class DefinitionTests(unittest.TestCase):
         for parser in ("mineru", "paddle"):
             with self.subTest(parser=parser):
                 environment = load_environment(ROOT / f"environments/{parser}/environment.yml")
-                self.assertIsNone(environment.build)
-                self.assertTrue(environment.image)
-                self.assertTrue(environment.conda_file["dependencies"])
+                environment.validate()
+                if parser == "paddle":
+                    # Azure resolves the upload folder relative to environment.yml.
+                    context = Path(environment.path).resolve()
+                    self.assertEqual(context, ROOT / "environments/paddle")
+                    self.assertTrue((context / environment.build.dockerfile_path).is_file())
+                    self.assertTrue((context / "conda.yml").is_file())
+                    self.assertIsNone(environment.image)
+                    self.assertIsNone(environment.conda_file)
+                else:
+                    self.assertIsNone(environment.build)
+                    self.assertTrue(environment.image)
+                    self.assertTrue(environment.conda_file["dependencies"])
 
     def test_components_and_pipeline_deployments_validate(self):
         for parser in ("mineru", "paddle"):

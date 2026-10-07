@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-import sys
 import time
 import traceback
 import urllib.request
@@ -35,23 +34,6 @@ def configure_models(parser, models, output):
     else:
         os.environ["PADDLE_PDX_CACHE_HOME"] = str(models)
     os.environ["PYTHONNOUSERSITE"] = "1"
-
-
-def server_environment():
-    environment = os.environ.copy()
-    # The vendor Paddle server must not import the new Conda client's libraries.
-    prefixes = {str(Path(sys.prefix).resolve())}
-    prefixes.update(value for key, value in environment.items() if key.startswith("CONDA_PREFIX"))
-    for key in ("PATH", "LD_LIBRARY_PATH"):
-        paths = environment.get(key, "").split(os.pathsep)
-        environment[key] = os.pathsep.join(path for path in paths if path and not any(
-            Path(path).resolve().is_relative_to(Path(prefix).resolve()) for prefix in prefixes))
-    server_bin = str(Path(environment["PADDLE_SERVER_PYTHON"]).parent)
-    environment["PATH"] = server_bin + os.pathsep + environment["PATH"]
-    for key in list(environment):
-        if key.startswith("CONDA_") or key in ("PYTHONPATH", "PYTHONHOME"):
-            environment.pop(key)
-    return environment
 
 
 def write_report(output, report):
@@ -85,6 +67,7 @@ def server_command():
         if not Path(file).is_file():
             raise FileNotFoundError(f"Base image server executable missing: {file}; check azure/paddle-command.yml")
     return [
+        "bash", str(Path(__file__).with_name("start_paddle_server.sh")),
         python, cli, "genai_server", "--model_name", "PaddleOCR-VL-1.6-0.9B",
         "--model_dir", str(Path(os.environ["PADDLE_PDX_CACHE_HOME"]) / "official_models/PaddleOCR-VL-1.6"),
         "--host", "127.0.0.1", "--port", "8118", "--backend", "vllm",
@@ -94,7 +77,7 @@ def server_command():
 def start_server(log, timeout=1200):
     command, health = server_command()
     process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-                               start_new_session=True, env=server_environment())
+                               start_new_session=True)
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:

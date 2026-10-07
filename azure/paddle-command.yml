@@ -1,10 +1,10 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: paddle_vl_command
-version: '2'
+version: '3'
 type: command
 is_deterministic: false
 code: ../workers
-environment: azureml:pdf-paddle:2
+environment: azureml:pdf-paddle:3
 inputs:
   models:
     type: custom_model
@@ -17,13 +17,13 @@ outputs:
     type: uri_folder
     mode: rw_mount
 command: >-
-  python run.py --parser paddle --input "${{inputs.pdfs}}"
+  bash start_paddle_client.sh --parser paddle --input "${{inputs.pdfs}}"
   --models "${{inputs.models}}"
   --output "${{outputs.results}}"
 environment_variables:
   PYTHONUNBUFFERED: '1'
   HF_HUB_OFFLINE: '1'
-  # Use the base image's Python for the server, and Azure's Conda for the client.
+  # The server launcher deactivates Conda before running the original image's Python.
   PADDLE_SERVER_PYTHON: /usr/local/bin/python
   PADDLE_SERVER_CLI: /usr/local/bin/paddleocr
 resources:

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from pdf_parsers import client
 from workers import run as worker
@@ -159,25 +159,42 @@ class WorkflowTests(unittest.TestCase):
         worker.configure_models("paddle", self.models, self.output)
         self.assertEqual(os.environ["PADDLE_PDX_CACHE_HOME"], str(self.models.resolve()))
 
-    def test_paddle_server_does_not_inherit_client_python_or_library_paths(self):
-        client_prefix = self.root / "conda-client"
-        server_prefix = self.root / "vendor-server"
-        env = {
-            "CONDA_PREFIX": str(client_prefix), "CONDA_DEFAULT_ENV": "client",
-            "PATH": f"{client_prefix}/bin:/usr/bin:/bin",
-            "LD_LIBRARY_PATH": f"{client_prefix}/lib:/usr/local/cuda/lib64",
-            "PYTHONPATH": str(client_prefix / "site-packages"),
-            "PADDLE_SERVER_PYTHON": str(server_prefix / "bin/python"),
-            "PADDLE_PDX_CACHE_HOME": str(self.models),
-        }
-        with patch.dict(os.environ, env, clear=True), patch.object(sys, "prefix", str(client_prefix)):
-            actual = worker.server_environment()
-            self.assertEqual(actual["PATH"], f"{server_prefix}/bin:/usr/bin:/bin")
-            self.assertEqual(actual["LD_LIBRARY_PATH"], "/usr/local/cuda/lib64")
-            self.assertNotIn("PYTHONPATH", actual)
-            self.assertNotIn("CONDA_PREFIX", actual)
-            self.assertEqual(actual["PADDLE_PDX_CACHE_HOME"], str(self.models))
-            self.assertEqual(os.environ["PATH"], env["PATH"])
+    def test_paddle_server_launch_preserves_logs_and_process_group_until_ready(self):
+        cli = self.root / "server cli.py"
+        cli.touch()
+        os.environ.update(PADDLE_SERVER_PYTHON=sys.executable, PADDLE_SERVER_CLI=str(cli),
+                          PADDLE_PDX_CACHE_HOME=str(self.models))
+        process = MagicMock()
+        process.poll.return_value = None
+        log = io.BytesIO()
+        with patch.object(worker.subprocess, "Popen", return_value=process) as launch, \
+             patch.object(worker.urllib.request, "urlopen") as health:
+            health.return_value.__enter__.return_value.status = 200
+            self.assertIs(worker.start_server(log), process)
+        command = launch.call_args.args[0]
+        self.assertEqual(command[0], "bash")
+        self.assertEqual(Path(command[1]), Path(worker.__file__).with_name("start_paddle_server.sh"))
+        self.assertTrue(Path(command[1]).is_file())
+        self.assertEqual(command[2:5], [sys.executable, str(cli), "genai_server"])
+        # Inherit Conda's activation state so the shell can undo it correctly.
+        self.assertNotIn("env", launch.call_args.kwargs)
+        self.assertIs(launch.call_args.kwargs["stdout"], log)
+        self.assertEqual(launch.call_args.kwargs["stderr"], subprocess.STDOUT)
+        self.assertTrue(launch.call_args.kwargs["start_new_session"])
+        health.assert_called_once_with("http://127.0.0.1:8118/health", timeout=5)
+
+    def test_server_launcher_failure_stops_immediately_and_cleans_up(self):
+        process = MagicMock()
+        process.poll.return_value = 17
+        process.returncode = 17
+        with patch.object(worker, "server_command", return_value=(["bash", "launcher.sh"], "health")), \
+             patch.object(worker.subprocess, "Popen", return_value=process), \
+             patch.object(worker, "stop_process") as stop, \
+             patch.object(worker.urllib.request, "urlopen") as health:
+            with self.assertRaisesRegex(RuntimeError, r"exited \(17\).*server.log"):
+                worker.start_server(io.BytesIO())
+        health.assert_not_called()
+        stop.assert_called_once_with(process)
 
     def test_flat_pdf_folder_accepts_spaces_and_uppercase_extension(self):
         files = [self.pdf("a.pdf"), self.pdf("space name.PDF")]
