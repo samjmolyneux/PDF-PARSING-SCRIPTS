@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
 name: paddle_vl_pipeline
-version: '3'
+version: '4'
 type: pipeline
 inputs:
   pdfs:
@@ -13,6 +13,13 @@ jobs:
   parse:
     type: command
     component: ./paddle-command.yml
+    # Runtime variables belong to this job, not the reusable command component.
+    environment_variables:
+      PYTHONUNBUFFERED: '1'
+      HF_HUB_OFFLINE: '1'
+      # The server launcher deactivates Conda before running the image's Python.
+      PADDLE_SERVER_PYTHON: /usr/local/bin/python
+      PADDLE_SERVER_CLI: /usr/local/bin/paddleocr
     inputs:
       models:
         type: custom_model

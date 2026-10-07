@@ -2,7 +2,7 @@ $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponentBatchDeplo
 name: paddle-vl
 endpoint_name: eppi-pdf-parsers-ccaesjm
 type: pipeline
-component: azureml:paddle_vl_pipeline:3
+component: azureml:paddle_vl_pipeline:4
 settings:
   default_compute: pdf-parsers-a100
   continue_on_step_failure: false

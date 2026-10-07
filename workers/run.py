@@ -65,7 +65,7 @@ def server_command():
     python, cli = os.environ["PADDLE_SERVER_PYTHON"], os.environ["PADDLE_SERVER_CLI"]
     for file in (python, cli):
         if not Path(file).is_file():
-            raise FileNotFoundError(f"Base image server executable missing: {file}; check azure/paddle-command.yml")
+            raise FileNotFoundError(f"Base image server executable missing: {file}; check azure/paddle-pipeline.yml")
     return [
         "bash", str(Path(__file__).with_name("start_paddle_server.sh")),
         python, cli, "genai_server", "--model_name", "PaddleOCR-VL-1.6-0.9B",

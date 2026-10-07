@@ -263,7 +263,8 @@ the job starts, through two short scripts uploaded with the worker code:
    only changes the server launch shell; the client stays in its environment.
 3. The server script uses `exec` to replace its shell with the original server
    Python and CLI, supplied through `PADDLE_SERVER_PYTHON` and `PADDLE_SERVER_CLI`
-   in the command YAML. The worker keeps the server's process ID for readiness
+   under `jobs.parse.environment_variables` in `azure/paddle-pipeline.yml`.
+   The worker keeps the server's process ID for readiness
    checks and shutdown, including its vLLM child processes.
 
 The client and server run together in one container on the same GPU. The Python
@@ -289,12 +290,19 @@ installer release and package indexes referenced by the definitions. Check the
 build result before submitting PDFs. The existing workspace's registry/build
 permissions and compute GPU drivers need verification in the smoke test.
 
-### Apply this Paddle image fix to an existing setup
+### Apply the Paddle startup fix to an existing setup
 
-This revision uses `pdf-paddle:3`, `paddle_vl_command:3` and
-`paddle_vl_pipeline:3`. It addresses the version 2 build failure
-`/bin/sh: 1: conda: not found` by installing Conda before creating the client.
-The model asset, endpoint, deployment name and compute are unchanged.
+This revision uses `paddle_vl_command:4` and `paddle_vl_pipeline:4`, with the
+existing `pdf-paddle:3` environment. It fixes `KeyError: 'PADDLE_SERVER_PYTHON'`
+by moving runtime environment variables from the command component to its
+pipeline job. A local regression test checks that the Azure SDK preserves them
+in the pipeline registration payload.
+
+The Dockerfile and environment version are unchanged, so this fix does not
+require a new image build. The model asset, endpoint, deployment name and
+compute are unchanged too. Version 3 of the image already addresses the older
+`/bin/sh: 1: conda: not found` build failure by installing Conda before creating
+the client.
 
 Once the local changes have been reviewed, preview and apply just Paddle:
 
@@ -304,11 +312,10 @@ python admin/deploy_parsers.py --parser paddle --apply
 ```
 
 If compute and `paddle-vl-models:1` are already registered, do not repeat compute
-setup or model download/registration for this image change. In **EPPI_DEV →
-Environments → Custom environments → pdf-paddle → Version 3**, inspect **Build
-log** and wait for a successful build. Then use the two-PDF smoke test below.
-The version 3 image has not been built or run as part of the local code changes;
-successful local tests do not verify the package installation or GPU runtime.
+setup or model download/registration. The failed Azure run used `pdf-paddle:3`
+and reached the Python worker, but stopped before launching the Paddle server.
+After applying this fix, submit a fresh two-PDF smoke test; the failed job keeps
+its old configuration. Server startup and GPU inference still need verification.
 
 ## 5. Smoke-test before handing it to colleagues
 
@@ -551,6 +558,7 @@ with Python 3.12 and `azure-ai-ml` 1.35.1.
 | Job stays queued | Cluster provisioning, quota, regional A100 capacity and other active jobs |
 | Environment fails to build | Build logs, Conda/pip resolution, registry/package-index access and free build space |
 | Paddle build reports `conda: not found` | Version 2 used the server image without installing Conda; deploy the version 3 Docker build context and inspect its build log |
+| Paddle reports `KeyError: 'PADDLE_SERVER_PYTHON'` | Deploy pipeline version 4, which sets runtime variables under `jobs.parse.environment_variables`; this fix reuses environment version 3 |
 | Model registration fails | Local weight directory, model version, available disk and workspace storage access |
 | Server fails to start | Paddle `server.log` or MinerU `parser.log`, image/driver compatibility and downloaded model paths |
 | Parser fails or PDFs are unconfirmed | `report.json` and `parser.log`; inspect partial exports before selecting PDFs to resubmit |

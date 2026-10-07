@@ -44,6 +44,20 @@ class DefinitionTests(unittest.TestCase):
                 self.assertEqual(deployment.settings["default_compute"], "pdf-parsers-a100")
                 self.assertTrue(deployment.settings["force_rerun"])
 
+    def test_paddle_runtime_variables_survive_pipeline_serialization(self):
+        pipeline = load_component(ROOT / "azure/paddle-pipeline.yml")
+        expected = {
+            "PYTHONUNBUFFERED": "1",
+            "HF_HUB_OFFLINE": "1",
+            "PADDLE_SERVER_PYTHON": "/usr/local/bin/python",
+            "PADDLE_SERVER_CLI": "/usr/local/bin/paddleocr",
+        }
+        # Schema validation alone didn't catch variables being lost when they
+        # were placed on the reusable component instead of the pipeline job.
+        self.assertEqual(pipeline.jobs["parse"].environment_variables, expected)
+        registered = pipeline._to_rest_object().properties.component_spec
+        self.assertEqual(registered["jobs"]["parse"]["environment_variables"], expected)
+
     def test_version_references_agree_and_models_stay_internal_to_pipeline(self):
         for parser in ("mineru", "paddle"):
             environment = load_environment(ROOT / f"environments/{parser}/environment.yml")

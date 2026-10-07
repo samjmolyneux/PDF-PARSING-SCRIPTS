@@ -8,7 +8,7 @@ upload, job tracking and download code.
 `run-paddle` calls the Azure deployment named `paddle-vl`; `run-mineru` calls
 the deployment named `mineru`.
 
-**Paddle's revised image still needs an Azure build and GPU smoke test.** See
+**Paddle's startup fix still needs an Azure GPU smoke test.** See
 [the administrator guide](docs/DEPLOYMENT.md) for setup and validation. Local tests
 cannot verify GPU inference, Azure permissions, quota, image builds or deployment.
 
