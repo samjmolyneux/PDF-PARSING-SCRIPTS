@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/model.schema.json
-name: pdf-mineru-models
-version: '1'
+name: mineru-models
+version: "1"
 type: custom_model
 description: MinerU pipeline and VLM weights downloaded from pinned official Hugging Face revisions.
 path: ./mineru
