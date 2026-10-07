@@ -43,7 +43,8 @@ class ClientTests(unittest.TestCase):
             receipt = json.loads(self.receipt().read_text())
             self.assertEqual(receipt["state"], "submitting")
             self.assertEqual(kwargs["job_name"], receipt["job_name"])
-            self.assertEqual(kwargs["deployment_name"], receipt["parser"])
+            expected_deployment = "paddle-vl" if receipt["parser"] == "paddle" else "mineru"
+            self.assertEqual(kwargs["deployment_name"], expected_deployment)
             staged = Path(kwargs["inputs"]["pdfs"].path)
             self.upload_directories.append(staged)
             self.assertNotEqual(staged, self.inputs)
@@ -120,7 +121,8 @@ class ClientTests(unittest.TestCase):
             with self.subTest(parser=parser):
                 code, message = self.call(self.inputs, "--no-wait", parser=parser)
                 self.assertEqual(code, 0, message)
-                self.assertEqual(self.ml.batch_endpoints.invoke.call_args.kwargs["deployment_name"], parser)
+                expected_deployment = "paddle-vl" if parser == "paddle" else "mineru"
+                self.assertEqual(self.ml.batch_endpoints.invoke.call_args.kwargs["deployment_name"], expected_deployment)
                 self.assertFalse(self.upload_directories[-1].exists())
                 receipt_path = self.receipt()
                 receipt = json.loads(receipt_path.read_text())

@@ -5,6 +5,9 @@ Azure processes the batch even after the submitting laptop disconnects. Two
 commands, `run-mineru` and `run-paddle`, have separate entry modules and share the
 upload, job tracking and download code.
 
+`run-paddle` calls the Azure deployment named `paddle-vl`; `run-mineru` calls
+the deployment named `mineru`.
+
 **Setup is not deployed yet.** See [the administrator guide](docs/DEPLOYMENT.md)
 for the one-time setup and GPU smoke test. Local tests cannot verify GPU inference,
 Azure permissions, quota, image builds or deployment.

@@ -4,6 +4,7 @@ import unittest
 
 from azure.ai.ml import load_batch_endpoint, load_component, load_compute, load_environment, load_model
 from azure.ai.ml.entities._load_functions import load_pipeline_component_batch_deployment
+from pdf_parsers.client import DEPLOYMENT_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,6 +47,7 @@ class DefinitionTests(unittest.TestCase):
             self.assertEqual(pipeline.jobs["parse"].inputs["models"].mode, "download")
             self.assertEqual(set(pipeline.inputs), {"pdfs"})
             self.assertEqual(deployment.component.removeprefix("azureml:"), f"{pipeline.name}:{pipeline.version}")
+            self.assertEqual(deployment.name, DEPLOYMENT_NAMES[parser])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ weights from the official Hugging Face repositories and needs no access to that
 machine.
 
 The design is one batch endpoint with two pipeline deployments, `mineru` and
-`paddle`, on a shared A100 cluster. Each invocation processes one folder on one
+`paddle-vl`, on a shared A100 cluster. Each invocation processes one folder on one
 GPU. The cluster scales from zero to one node and returns to zero when idle.
 The endpoint remains registered while the GPU is off. Azure supports this
 [pipeline batch deployment pattern](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-use-batch-pipeline-deployments?view=azureml-api-2).
@@ -171,6 +171,11 @@ There are two files per environment, following Azure's
 | `models/mineru.yml`, `models/paddle.yml` | Model asset name/version and local download path |
 | `azure/*-command.yml` | Environment version, worker arguments and runtime variables |
 | `azure/*-pipeline.yml` | Model version used by that parser's job |
+
+The Paddle Azure asset names are `paddle-vl-models` (model), `paddle_vl_command`
+(command component), `paddle_vl_pipeline` (pipeline component), and `paddle-vl`
+(deployment). Its environment remains `pdf-paddle`. The local parser selector is
+still `--parser paddle`, and colleagues still use `run-paddle`.
 
 There are no custom Dockerfiles to maintain. Azure still builds a container from
 the base image plus Conda dependencies. Its fresh Conda environment does not

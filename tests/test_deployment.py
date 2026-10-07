@@ -42,8 +42,10 @@ class DeploymentTests(unittest.TestCase):
                 pipelines = [call.args[0] for call in client.components.create_or_update.call_args_list]
                 deployments = [call.args[0] for call in client.batch_deployments.begin_create_or_update.call_args_list]
                 self.assertEqual([env.name for env in environments], [f"pdf-{parser}" for parser in parsers])
-                self.assertEqual([pipeline.name for pipeline in pipelines], [f"pdf_{parser}_pipeline" for parser in parsers])
-                self.assertEqual([deployment.name for deployment in deployments], parsers)
+                pipeline_names = {"mineru": "pdf_mineru_pipeline", "paddle": "paddle_vl_pipeline"}
+                self.assertEqual([pipeline.name for pipeline in pipelines], [pipeline_names[parser] for parser in parsers])
+                deployment_names = {"mineru": "mineru", "paddle": "paddle-vl"}
+                self.assertEqual([deployment.name for deployment in deployments], [deployment_names[parser] for parser in parsers])
                 endpoint = client.batch_endpoints.begin_create_or_update.call_args.args[0]
                 self.assertEqual(endpoint.name, "custom-endpoint")
                 self.assertEqual(endpoint.auth_mode, "aad_token")

@@ -1,5 +1,5 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
-name: pdf_paddle_pipeline
+name: paddle_vl_pipeline
 version: '2'
 type: pipeline
 inputs:
@@ -16,7 +16,7 @@ jobs:
     inputs:
       models:
         type: custom_model
-        path: azureml:pdf-paddle-models:1
+        path: azureml:paddle-vl-models:1
         mode: download
       pdfs: ${{parent.inputs.pdfs}}
     outputs:

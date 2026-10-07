@@ -1,5 +1,5 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
-name: pdf_paddle_command
+name: paddle_vl_command
 version: '2'
 type: command
 is_deterministic: false

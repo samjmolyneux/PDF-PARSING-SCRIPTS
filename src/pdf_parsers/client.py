@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 TERMINAL = {"Completed", "Failed", "Canceled", "Cancelled", "NotResponding"}
+DEPLOYMENT_NAMES = {"mineru": "mineru", "paddle": "paddle-vl"}
 
 
 def save_json(path, value):
@@ -132,7 +133,7 @@ def main(parser_name, argv=None):
                 for pdf in files:
                     shutil.copyfile(pdf, Path(temporary) / pdf.name)
                 job = ml.batch_endpoints.invoke(
-                    endpoint_name=config["endpoint"], deployment_name=parser_name,
+                    endpoint_name=config["endpoint"], deployment_name=DEPLOYMENT_NAMES[parser_name],
                     job_name=receipt["job_name"],
                     inputs={"pdfs": Input(type="uri_folder", mode="download", path=temporary)},
                 )

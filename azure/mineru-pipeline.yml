@@ -16,7 +16,7 @@ jobs:
     inputs:
       models:
         type: custom_model
-        path: azureml:pdf-mineru-models:1
+        path: azureml:mineru-models:1
         mode: download
       pdfs: ${{parent.inputs.pdfs}}
     outputs:
