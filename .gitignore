@@ -13,3 +13,4 @@ results/
 models/*/
 *.log
 .DS_Store
+*.[pP][dD][fF]
