@@ -2,6 +2,11 @@
 requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+docs = [
+    "mkdocs>=1.6,<2",
+]
+
 [project]
 name = "pdf-parsing-scripts"
 version = "0.1.0"

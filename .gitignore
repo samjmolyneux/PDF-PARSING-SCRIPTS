@@ -1,6 +1,7 @@
 .venv/
 build/
 dist/
+site/
 *.egg-info/
 __pycache__/
 .ipynb_checkpoints/

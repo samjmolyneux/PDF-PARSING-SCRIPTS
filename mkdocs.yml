@@ -1,0 +1,38 @@
+site_name: PDF parsers
+site_description: Run PaddleOCR-VL and MinerU on Azure ML, or deploy them in your own workspace.
+repo_url: https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS
+repo_name: GitHub
+edit_uri: edit/main/docs/
+strict: true
+
+exclude_docs: |
+  /AGENTS.md
+
+theme:
+  name: readthedocs
+  prev_next_buttons_location: none
+
+plugins:
+  - search
+
+validation:
+  links:
+    not_found: warn
+    anchors: warn
+    unrecognized_links: warn
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/copy-code.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+
+nav:
+  - Start here: index.md
+  - Run parsers: RUNNING.md
+  - Deploy parsers: DEPLOYMENT.md
