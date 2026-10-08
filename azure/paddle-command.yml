@@ -1,14 +1,11 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: paddle_vl_command
-version: "5"
+version: '6'
 type: command
 is_deterministic: false
 code: ../workers
-environment: azureml:pdf-paddle:4
+environment: azureml:pdf-paddle:5
 inputs:
-  models:
-    type: custom_model
-    mode: download
   pdfs:
     type: uri_folder
     mode: download
@@ -18,7 +15,6 @@ outputs:
     mode: rw_mount
 command: >-
   bash start_paddle_client.sh --parser paddle --input "${{inputs.pdfs}}"
-  --models "${{inputs.models}}"
   --output "${{outputs.results}}"
 resources:
   instance_count: 1

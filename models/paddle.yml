@@ -1,6 +1,0 @@
-$schema: https://azuremlschemas.azureedge.net/latest/model.schema.json
-name: paddle-vl-models
-version: "1"
-type: custom_model
-description: PaddleOCR-VL 1.6 and PP-DocLayoutV3 weights downloaded from pinned official Hugging Face revisions.
-path: ./paddle

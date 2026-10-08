@@ -23,10 +23,6 @@ class WorkflowTests(unittest.TestCase):
         self.inputs.mkdir()
         self.output = self.root / "results"
         self.models = self.root / "models"
-        for name in ("pipeline", "vlm", "official_models/PaddleOCR-VL-1.6", "official_models/PP-DocLayoutV3"):
-            directory = self.models / name
-            directory.mkdir(parents=True)
-            (directory / "weights.bin").write_bytes(b"model fixture")
         environment = patch.dict(os.environ)
         environment.start()
         self.addCleanup(environment.stop)
@@ -52,7 +48,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(worker, "start_server") as start, \
              patch.object(worker.subprocess, "run", side_effect=export) as run, \
              contextlib.redirect_stdout(io.StringIO()):
-            code = worker.process_batch("mineru", self.inputs, self.output, self.models)
+            code = worker.process_batch("mineru", self.inputs, self.output)
         self.assertEqual(code, 0)
         start.assert_not_called()
         run.assert_called_once()
@@ -73,7 +69,7 @@ class WorkflowTests(unittest.TestCase):
             (target / "result.json").write_text("{}")
         with patch.object(worker.subprocess, "run", side_effect=export), \
              contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(worker.process_batch("mineru", self.inputs, self.output, self.models), 1)
+            self.assertEqual(worker.process_batch("mineru", self.inputs, self.output), 1)
         self.assertEqual([d["status"] for d in self.report()["documents"]], ["succeeded", "unconfirmed"])
         self.assertIn("Expected exports not found", self.report()["documents"][1]["error"])
 
@@ -88,7 +84,7 @@ class WorkflowTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, command)
         with patch.object(worker.subprocess, "run", side_effect=fail) as run, \
              contextlib.redirect_stdout(io.StringIO()):
-            code = worker.process_batch("mineru", self.inputs, self.output, self.models)
+            code = worker.process_batch("mineru", self.inputs, self.output)
         self.assertEqual(code, 1)
         run.assert_called_once()
         self.assertEqual([d["status"] for d in self.report()["documents"]], ["unconfirmed", "unconfirmed"])
@@ -107,7 +103,7 @@ class WorkflowTests(unittest.TestCase):
              patch.object(worker, "stop_process") as stop, \
              patch.object(worker, "parse_pdfs", side_effect=parse) as parse_call, \
              contextlib.redirect_stdout(io.StringIO()):
-            code = worker.process_batch("paddle", self.inputs, self.output, self.models)
+            code = worker.process_batch("paddle", self.inputs, self.output)
         self.assertEqual(code, 1)
         start.assert_called_once()
         stop.assert_called_once()
@@ -121,7 +117,7 @@ class WorkflowTests(unittest.TestCase):
              patch.object(worker, "stop_process"), \
              patch.object(worker, "parse_pdfs", return_value=iter([])), \
              contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(worker.process_batch("paddle", self.inputs, self.output, self.models), 1)
+            self.assertEqual(worker.process_batch("paddle", self.inputs, self.output), 1)
         self.assertIn("did not confirm", self.report()["fatal_error"])
 
     def test_server_start_failure_leaves_every_pdf_unconfirmed(self):
@@ -129,7 +125,7 @@ class WorkflowTests(unittest.TestCase):
         self.pdf("b.pdf")
         with patch.object(worker, "start_server", side_effect=RuntimeError("missing model")) as start, \
              contextlib.redirect_stdout(io.StringIO()):
-            code = worker.process_batch("paddle", self.inputs, self.output, self.models)
+            code = worker.process_batch("paddle", self.inputs, self.output)
         self.assertEqual(code, 1)
         self.assertEqual(start.call_count, 1)
         self.assertFalse(self.report()["finished"])
@@ -138,26 +134,39 @@ class WorkflowTests(unittest.TestCase):
 
     def test_empty_batch_is_failure(self):
         with patch.object(worker, "start_server") as start, contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(worker.process_batch("mineru", self.inputs, self.output, self.models), 1)
+            self.assertEqual(worker.process_batch("mineru", self.inputs, self.output), 1)
         start.assert_not_called()
         self.assertIn("No PDFs", self.report()["fatal_error"])
 
-    def test_missing_models_leave_an_actionable_report_without_starting_server(self):
+    def test_worker_preserves_model_locations_from_the_image(self):
         self.pdf("a.pdf")
-        with patch.object(worker, "start_server") as start, contextlib.redirect_stdout(io.StringIO()):
-            code = worker.process_batch("mineru", self.inputs, self.output, self.root / "missing-models")
-        self.assertEqual(code, 1)
-        start.assert_not_called()
-        self.assertIn("Missing/empty model directory", self.report()["fatal_error"])
-        self.assertEqual(self.report()["documents"][0]["status"], "unconfirmed")
+        config = self.root / "image-mineru.json"
+        contents = '{"models-dir": {"pipeline": "/image/pipeline", "vlm": "/image/vlm"}}'
+        config.write_text(contents)
+        variables = {
+            "MINERU_TOOLS_CONFIG_JSON": str(config),
+            "MINERU_MODEL_SOURCE": "local",
+            "PADDLE_PDX_CACHE_HOME": "/image/paddle",
+        }
 
-    def test_model_paths_follow_downloaded_asset_location(self):
-        self.output.mkdir()
-        worker.configure_models("mineru", self.models, self.output)
-        config = json.loads(Path(os.environ["MINERU_TOOLS_CONFIG_JSON"]).read_text())
-        self.assertEqual(config["models-dir"]["vlm"], str(self.models.resolve() / "vlm"))
-        worker.configure_models("paddle", self.models, self.output)
-        self.assertEqual(os.environ["PADDLE_PDX_CACHE_HOME"], str(self.models.resolve()))
+        observed = []
+
+        def record_environment(*args, **kwargs):
+            observed.append(({key: os.environ.get(key) for key in variables},
+                             config.read_text(), os.environ.get("PYTHONNOUSERSITE")))
+
+        with patch.dict(os.environ, variables), \
+             patch.object(worker.subprocess, "run", side_effect=record_environment) as mineru, \
+             patch.object(worker, "start_server", side_effect=record_environment) as paddle, \
+             patch.object(worker, "parse_pdfs", return_value=iter([])), \
+             contextlib.redirect_stdout(io.StringIO()):
+            for parser in ("mineru", "paddle"):
+                worker.process_batch(parser, self.inputs, self.output)
+        mineru.assert_called_once()
+        paddle.assert_called_once()
+        # Assert outside the worker, which deliberately catches parser exceptions.
+        self.assertEqual(observed, [(variables, contents, "1"), (variables, contents, "1")])
+        self.assertFalse((self.output / "mineru-runtime.json").exists())
 
     def test_paddle_server_launch_preserves_logs_and_process_group_until_ready(self):
         cli = self.root / "server cli.py"
@@ -211,7 +220,7 @@ class WorkflowTests(unittest.TestCase):
                     self.assertEqual(client.pdf_files(self.inputs)[1], [pdf.resolve()])
                     with patch.object(worker.subprocess, "run") as run, \
                          contextlib.redirect_stdout(io.StringIO()):
-                        self.assertEqual(worker.process_batch("mineru", self.inputs, self.output, self.models), 1)
+                        self.assertEqual(worker.process_batch("mineru", self.inputs, self.output), 1)
                     run.assert_not_called()
                 finally:
                     path.unlink()

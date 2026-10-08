@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
 name: paddle_vl_pipeline
-version: '5'
+version: '6'
 type: pipeline
 inputs:
   pdfs:
@@ -21,10 +21,6 @@ jobs:
       PADDLE_SERVER_PYTHON: /usr/local/bin/python
       PADDLE_SERVER_CLI: /usr/local/bin/paddleocr
     inputs:
-      models:
-        type: custom_model
-        path: azureml:paddle-vl-models:1
-        mode: download
       pdfs: ${{parent.inputs.pdfs}}
     outputs:
       results: ${{parent.outputs.results}}

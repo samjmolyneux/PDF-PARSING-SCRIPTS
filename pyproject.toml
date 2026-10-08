@@ -13,9 +13,6 @@ dependencies = [
     "azure-identity>=1.19.0,<2",
 ]
 
-[project.optional-dependencies]
-admin = ["huggingface-hub>=1.0,<2"]
-
 [project.scripts]
 run-mineru = "pdf_parsers.mineru:main"
 run-paddle = "pdf_parsers.paddle:main"

@@ -10,6 +10,8 @@ dependencies:
   - pip:
       - paddleocr[doc-parser]==3.7.0
       - paddlex==3.7.2
+      # Supplies the hf download command used during the image build.
+      - huggingface-hub>=0.34
       # Paddle's Word export imports docx, which doc-parser does not install.
       - python-docx==1.2.0
       # Direct official wheel fixes CUDA 13 as well as the Paddle version.

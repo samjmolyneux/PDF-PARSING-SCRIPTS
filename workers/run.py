@@ -18,24 +18,6 @@ else:
     from paddle_batch import parse_pdfs
 
 
-def configure_models(parser, models, output):
-    models = models.resolve()
-    required = ("pipeline", "vlm") if parser == "mineru" else (
-        "official_models/PaddleOCR-VL-1.6", "official_models/PP-DocLayoutV3")
-    for directory in required:
-        if not (models / directory).is_dir() or not any((models / directory).rglob("*")):
-            raise FileNotFoundError(f"Missing/empty model directory: {models / directory}")
-    if parser == "mineru":
-        config = output / "mineru-runtime.json"
-        config.write_text(json.dumps({"models-dir": {
-            name: str(models / name) for name in required}}, indent=2) + "\n", encoding="utf-8")
-        os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(config)
-        os.environ["MINERU_MODEL_SOURCE"] = "local"
-    else:
-        os.environ["PADDLE_PDX_CACHE_HOME"] = str(models)
-    os.environ["PYTHONNOUSERSITE"] = "1"
-
-
 def write_report(output, report):
     temporary = output / "report.json.tmp"
     temporary.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -96,7 +78,7 @@ def start_server(log, timeout=1200):
         raise
 
 
-def process_batch(parser, input_dir, output, models):
+def process_batch(parser, input_dir, output):
     input_dir, output = input_dir.resolve(), output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     pdfs = sorted(p for p in input_dir.iterdir() if p.is_file() and p.suffix.lower() == ".pdf")
@@ -117,7 +99,7 @@ def process_batch(parser, input_dir, output, models):
                 raise ValueError("Use a flat folder containing only PDFs; copy linked files first.")
             if len({p.stem.casefold() for p in pdfs}) != len(pdfs):
                 raise ValueError("PDF filenames must be distinct without letter case.")
-            configure_models(parser, models, output)
+            os.environ["PYTHONNOUSERSITE"] = "1"
             exports = output / "documents"
             exports.mkdir(exist_ok=True)
             if parser == "mineru":
@@ -164,6 +146,5 @@ if __name__ == "__main__":
     cli.add_argument("--parser", choices=["mineru", "paddle"], required=True)
     cli.add_argument("--input", type=Path, required=True)
     cli.add_argument("--output", type=Path, required=True)
-    cli.add_argument("--models", type=Path, required=True, help="Downloaded Azure ML model asset directory")
     args = cli.parse_args()
-    raise SystemExit(process_batch(args.parser, args.input, args.output, args.models))
+    raise SystemExit(process_batch(args.parser, args.input, args.output))

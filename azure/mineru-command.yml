@@ -1,14 +1,11 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: pdf_mineru_command
-version: '2'
+version: '5'
 type: command
 is_deterministic: false
 code: ../workers
-environment: azureml:pdf-mineru:2
+environment: azureml:pdf-mineru:5
 inputs:
-  models:
-    type: custom_model
-    mode: download
   pdfs:
     type: uri_folder
     mode: download
@@ -17,15 +14,8 @@ outputs:
     type: uri_folder
     mode: rw_mount
 command: >-
-  python run.py --parser mineru --input "${{inputs.pdfs}}"
-  --models "${{inputs.models}}"
+  python3 run.py --parser mineru --input "${{inputs.pdfs}}"
   --output "${{outputs.results}}"
-environment_variables:
-  PYTHONUNBUFFERED: '1'
-  HF_HUB_OFFLINE: '1'
-  MINERU_MODEL_SOURCE: local
-  # Allow long native tasks to run up to Azure's whole-job deadline.
-  MINERU_TASK_RESULT_TIMEOUT_SECONDS: '86400'
 resources:
   instance_count: 1
   shm_size: 64g

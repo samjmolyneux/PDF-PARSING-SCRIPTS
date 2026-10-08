@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from azure.ai.ml import load_batch_endpoint, load_component, load_compute, load_environment, load_model
+from azure.ai.ml import load_batch_endpoint, load_component, load_compute, load_environment
 from azure.ai.ml.entities._load_functions import load_pipeline_component_batch_deployment
 from pdf_parsers.client import DEPLOYMENT_NAMES
 
@@ -19,18 +19,14 @@ class DefinitionTests(unittest.TestCase):
             with self.subTest(parser=parser):
                 environment = load_environment(ROOT / f"environments/{parser}/environment.yml")
                 environment.validate()
+                # Azure resolves the upload folder relative to environment.yml.
+                context = Path(environment.path).resolve()
+                self.assertEqual(context, ROOT / f"environments/{parser}")
+                self.assertTrue((context / environment.build.dockerfile_path).is_file())
                 if parser == "paddle":
-                    # Azure resolves the upload folder relative to environment.yml.
-                    context = Path(environment.path).resolve()
-                    self.assertEqual(context, ROOT / "environments/paddle")
-                    self.assertTrue((context / environment.build.dockerfile_path).is_file())
                     self.assertTrue((context / "conda.yml").is_file())
-                    self.assertIsNone(environment.image)
-                    self.assertIsNone(environment.conda_file)
-                else:
-                    self.assertIsNone(environment.build)
-                    self.assertTrue(environment.image)
-                    self.assertTrue(environment.conda_file["dependencies"])
+                self.assertIsNone(environment.image)
+                self.assertIsNone(environment.conda_file)
 
     def test_components_and_pipeline_deployments_validate(self):
         for parser in ("mineru", "paddle"):
@@ -44,31 +40,36 @@ class DefinitionTests(unittest.TestCase):
                 self.assertEqual(deployment.settings["default_compute"], "pdf-parsers-a100")
                 self.assertTrue(deployment.settings["force_rerun"])
 
-    def test_paddle_runtime_variables_survive_pipeline_serialization(self):
-        pipeline = load_component(ROOT / "azure/paddle-pipeline.yml")
-        expected = {
-            "PYTHONUNBUFFERED": "1",
-            "HF_HUB_OFFLINE": "1",
-            "PADDLE_SERVER_PYTHON": "/usr/local/bin/python",
-            "PADDLE_SERVER_CLI": "/usr/local/bin/paddleocr",
+    def test_runtime_variables_survive_pipeline_serialization(self):
+        parser_variables = {
+            "mineru": {
+                "MINERU_MODEL_SOURCE": "local",
+                "MINERU_TASK_RESULT_TIMEOUT_SECONDS": "86400",
+            },
+            "paddle": {
+                "PADDLE_SERVER_PYTHON": "/usr/local/bin/python",
+                "PADDLE_SERVER_CLI": "/usr/local/bin/paddleocr",
+            },
         }
         # Schema validation alone didn't catch variables being lost when they
         # were placed on the reusable component instead of the pipeline job.
-        self.assertEqual(pipeline.jobs["parse"].environment_variables, expected)
-        registered = pipeline._to_rest_object().properties.component_spec
-        self.assertEqual(registered["jobs"]["parse"]["environment_variables"], expected)
+        for parser, variables in parser_variables.items():
+            with self.subTest(parser=parser):
+                pipeline = load_component(ROOT / f"azure/{parser}-pipeline.yml")
+                expected = {"PYTHONUNBUFFERED": "1", "HF_HUB_OFFLINE": "1", **variables}
+                self.assertEqual(pipeline.jobs["parse"].environment_variables, expected)
+                registered = pipeline._to_rest_object().properties.component_spec
+                self.assertEqual(registered["jobs"]["parse"]["environment_variables"], expected)
 
-    def test_version_references_agree_and_models_stay_internal_to_pipeline(self):
+    def test_version_references_agree_and_pdfs_are_the_only_job_input(self):
         for parser in ("mineru", "paddle"):
             environment = load_environment(ROOT / f"environments/{parser}/environment.yml")
-            model = load_model(ROOT / f"models/{parser}.yml")
             command = load_component(ROOT / f"azure/{parser}-command.yml")
             pipeline = load_component(ROOT / f"azure/{parser}-pipeline.yml")
             deployment = load_pipeline_component_batch_deployment(ROOT / f"azure/{parser}-deployment.yml")
             self.assertEqual(command.environment.removeprefix("azureml:"), f"{environment.name}:{environment.version}")
-            self.assertEqual(command.inputs["models"].type, "custom_model")
-            self.assertEqual(pipeline.jobs["parse"].inputs["models"].path.removeprefix("azureml:"), f"{model.name}:{model.version}")
-            self.assertEqual(pipeline.jobs["parse"].inputs["models"].mode, "download")
+            self.assertEqual(set(command.inputs), {"pdfs"})
+            self.assertEqual(set(pipeline.jobs["parse"].inputs), {"pdfs"})
             self.assertEqual(set(pipeline.inputs), {"pdfs"})
             self.assertEqual(deployment.component.removeprefix("azureml:"), f"{pipeline.name}:{pipeline.version}")
             self.assertEqual(deployment.name, DEPLOYMENT_NAMES[parser])

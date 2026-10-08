@@ -19,3 +19,16 @@ RUN /opt/conda/bin/conda env create \
         --prefix /opt/client \
         --file /tmp/client-conda.yml \
     && /opt/conda/bin/conda clean --all --yes
+
+# Both processes use these models from the image, without an Azure model input.
+ENV PADDLE_PDX_CACHE_HOME=/opt/paddle-models
+
+# Download the layout model.
+RUN /opt/client/bin/hf download PaddlePaddle/PP-DocLayoutV3 \
+    --revision 241f8bdfc77a7c7bee915a5057aaee58c235a8d3 \
+    --local-dir "${PADDLE_PDX_CACHE_HOME}/official_models/PP-DocLayoutV3"
+
+# Download the vision-language model.
+RUN /opt/client/bin/hf download PaddlePaddle/PaddleOCR-VL-1.6 \
+    --revision c5630abae1d940eafe0697512a0325494b02ab42 \
+    --local-dir "${PADDLE_PDX_CACHE_HOME}/official_models/PaddleOCR-VL-1.6"

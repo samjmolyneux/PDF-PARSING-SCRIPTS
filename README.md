@@ -8,7 +8,7 @@ upload, job tracking and download code.
 `run-paddle` calls the Azure deployment named `paddle-vl`; `run-mineru` calls
 the deployment named `mineru`.
 
-**Paddle's Word-export fix still needs an Azure image build and GPU smoke test.** See
+**Both images now bundle their model weights and need an Azure image build and GPU smoke test.** See
 [the administrator guide](docs/DEPLOYMENT.md) for setup and validation. Local tests
 cannot verify GPU inference, Azure permissions, quota, image builds or deployment.
 
@@ -114,7 +114,8 @@ in another folder. These checks do not assess OCR quality.
   project does not automatically delete them; cleanup is manual for now.
   Storage continues to accumulate until files are removed.
 - Setup leaves any existing storage-account deletion policies unchanged.
-- Model weights, environments and worker code remain centrally managed Azure assets.
+- Model weights are bundled in the centrally managed environment images; worker
+  code is uploaded with the pipeline. There is no separate model asset to register.
 - The GPU cluster starts with a zero-node minimum, one-node maximum, and a
   two-minute idle scale-down. More nodes can be allowed later. Each job uses one
   node. To allow concurrent submissions through our CLI, the busy check would
@@ -130,54 +131,55 @@ on the existing `sam-a100` compute instance.
 
 ## Development and administration
 
-GPU package lists remain in readable Conda YAML files:
+MinerU installs into its base image directly; Paddle keeps its separate Conda client:
 
-- `environments/mineru/environment.yml` and `conda.yml`: Azure image/version and MinerU dependencies.
+- `environments/mineru/environment.yml`: tells Azure to build the adjacent Dockerfile.
+- `environments/mineru/Dockerfile`: adds system libraries/fonts, installs pinned
+  MinerU into the vLLM image's existing Python, and downloads models during the
+  build. The Azure command runs `python3 run.py` directly; no Conda is involved.
 - `environments/paddle/environment.yml`: tells Azure to build the adjacent Dockerfile.
 - `environments/paddle/Dockerfile`: extends the official Paddle server image with
-  Conda and a separate client environment at `/opt/client`.
+  Conda, a separate client environment at `/opt/client`, and bundled models
+  downloaded with `hf download` at pinned Hugging Face revisions.
 - `environments/paddle/conda.yml`: Python version and Paddle client dependencies.
 - `workers/start_paddle_client.sh` and `start_paddle_server.sh`: activate Conda
   for the client and deactivate it in the separate server launch shell.
-- `models/mineru.yml` and `models/paddle.yml`: separately versioned model weights.
 - `azure/`: compute, commands, pipelines and batch deployments that connect them.
 - `admin/setup_compute.py`: reads `config.json` and applies `azure/compute.yml`
   to the existing workspace; compute setup is separate from deployment.
 - `admin/deploy_parsers.py`: registers the selected environments and pipelines,
   then creates or updates their deployments under the shared endpoint.
 
-Preview the registrations without contacting Azure:
+Preview deployment without contacting Azure:
 
 ```sh
 python admin/deploy_parsers.py
-python admin/register_models.py
 ```
 
-An administrator downloads pinned weights and registers them once, then deploys
-the endpoint. From the repository root on the administrator's computer:
+Follow the [administrator guide](docs/DEPLOYMENT.md) to create the compute if
+needed, deploy the selected parser, and check its image build. For Paddle alone:
 
 ```sh
-python -m pip install '.[admin]'
-python admin/download_models.py --parser mineru
-python admin/download_models.py --parser paddle
+python admin/deploy_parsers.py --parser paddle --apply
 ```
 
-These commands download files locally; they need no GPU and do not upload to
-Azure. Follow the [administrator guide](docs/DEPLOYMENT.md) to register the
-downloaded folders and deploy. Download and register only the parsers you need.
-Use `python admin/deploy_parsers.py --parser paddle --apply` for Paddle alone, or replace
-`paddle` with `mineru` or `both`. Omitting `--parser` deploys both.
+Replace `paddle` with `mineru` or `both`; omitting `--parser` selects both.
+The image build downloads the models from Hugging Face. There is no local weight
+download, model upload or model-registration step. Existing local model folders
+and previously registered Azure models can be kept for older deployments.
 
-Model registration is separate from deployment: rerun it only when introducing a
-new model version. The repository IDs, revisions and file selection are defined
-in `admin/download_models.py`.
+MinerU uses `mineru-models-download -s huggingface -m all` from the installed
+MinerU 3.3.1 package, so we do not maintain a duplicate model list. It writes a
+config pointing to the model files inside the image; jobs use those local paths.
+A fresh build can resolve newer upstream weights because MinerU's downloader
+does not pin their Hub revisions. Paddle retains its two exact revision pins in
+`environments/paddle/Dockerfile`. Reusing a built image reuses its weights.
 
 The [administrator guide](docs/DEPLOYMENT.md#changing-environments-or-models)
 explains how to update an environment and redeploy the selected parser.
 
 Dependencies, the minimum Python version and console commands are declared in
-`pyproject.toml`. The `admin` extra adds the Hugging Face download library;
-colleagues only need the normal installation.
-For local development, use `python -m pip install -e '.[admin]'` so source edits
+`pyproject.toml`.
+For local development, use `python -m pip install -e .` so source edits
 are picked up without reinstalling. Run the local checks with
 `python -m unittest discover -s tests -v` from the repository root.
