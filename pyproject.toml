@@ -1,31 +1,53 @@
 [build-system]
-requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
+requires = ["setuptools>=77.0.3"]
 
 [dependency-groups]
 docs = [
-    "mkdocs>=1.6,<2",
+    "mkdocs>=1.6,<2"
+]
+test = [
+    "pre-commit>=4,<5",
+    "ruff==0.14.1",
+    "toml-sort==0.24.2",
+    "yamllint==1.29.0"
 ]
 
 [project]
-name = "pdf-parsing-scripts"
-version = "0.1.0"
-description = "Local command-line clients for the team's Azure ML PDF parsers"
-readme = "README.md"
-requires-python = ">=3.10"
 dependencies = [
     "azure-ai-ml>=1.32.0,<2",
-    "azure-identity>=1.19.0,<2",
+    "azure-identity>=1.19.0,<2"
 ]
+description = "Local command-line clients for the team's Azure ML PDF parsers"
+name = "pdf-parsing-scripts"
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0"
 
 [project.scripts]
 run-mineru = "pdf_parsers.mineru:main"
 run-paddle = "pdf_parsers.paddle:main"
 
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
-where = ["src"]
 include = ["pdf_parsers*"]
 namespaces = false
+where = ["src"]
+
+[tool.tomlsort]
+all = true
+ignore_case = true
+in_place = true
+spaces_before_inline_comment = 2
+spaces_indent_inline_array = 4
+overrides."dependency-groups.docs".inline_arrays = false
+overrides."dependency-groups.test".inline_arrays = false
+overrides."project.dependencies".inline_arrays = false

@@ -1,4 +1,5 @@
 """Run the installed console commands outside the repository, without Azure calls."""
+
 import json
 import os
 from pathlib import Path
@@ -20,8 +21,14 @@ class InstalledCliTests(unittest.TestCase):
         executable = Path(sysconfig.get_path("scripts")) / (name + suffix)
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
-        return subprocess.run([str(executable), *args], cwd=self.root, env=environment,
-                              capture_output=True, text=True, timeout=10)
+        return subprocess.run(
+            [str(executable), *args],
+            cwd=self.root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
 
     def test_help_works_for_both_installed_commands_from_another_folder(self):
         for name in ("run-mineru", "run-paddle"):
@@ -29,7 +36,13 @@ class InstalledCliTests(unittest.TestCase):
                 result = self.command(name, "--help")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f"usage: {name}", result.stdout)
-                for option in ("--config", "--output", "--resume", "--no-wait", "--browser-login"):
+                for option in (
+                    "--config",
+                    "--output",
+                    "--resume",
+                    "--no-wait",
+                    "--browser-login",
+                ):
                     self.assertIn(option, result.stdout)
         self.assertFalse(list(self.root.iterdir()))
 

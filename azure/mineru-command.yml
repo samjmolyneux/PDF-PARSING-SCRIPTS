@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: pdf_mineru_command
-version: '5'
+version: "5"
 type: command
 is_deterministic: false
 code: ../workers

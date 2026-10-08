@@ -1,4 +1,5 @@
 """Verify streaming document exports without importing Paddle or running a GPU."""
+
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -17,30 +18,48 @@ class PaddleBatchTests(unittest.TestCase):
         self.output = self.root / "exports"
         self.pipeline = MagicMock()
         self.factory = MagicMock(return_value=self.pipeline)
-        modules = patch.dict("sys.modules", {"paddleocr": SimpleNamespace(PaddleOCRVL=self.factory)})
+        modules = patch.dict(
+            "sys.modules", {"paddleocr": SimpleNamespace(PaddleOCRVL=self.factory)}
+        )
         modules.start()
         self.addCleanup(modules.stop)
-        environment = patch.dict("os.environ", {"PADDLE_PDX_CACHE_HOME": str(self.root)})
+        environment = patch.dict(
+            "os.environ", {"PADDLE_PDX_CACHE_HOME": str(self.root)}
+        )
         environment.start()
         self.addCleanup(environment.stop)
 
         def restructure(*, res_list, **kwargs):
-            self.assertEqual(kwargs, dict(merge_tables=True, relevel_titles=True, concatenate_pages=True))
+            self.assertEqual(
+                kwargs,
+                dict(merge_tables=True, relevel_titles=True, concatenate_pages=True),
+            )
             self.assertEqual(len({p["input_path"] for p in res_list}), 1)
             content = ",".join(str(page["page_index"]) for page in res_list)
             result = MagicMock()
-            for method, suffix in (("json", "json"), ("markdown", "md"), ("word", "docx")):
+            for method, suffix in (
+                ("json", "json"),
+                ("markdown", "md"),
+                ("word", "docx"),
+            ):
+
                 def save(*, save_path, suffix=suffix):
                     (save_path / f"result.{suffix}").write_text(content)
                     (save_path / "image.png").write_bytes(b"retained image")
+
                 getattr(result, f"save_to_{method}").side_effect = save
             return [result]
+
         self.pipeline.restructure_pages.side_effect = restructure
 
     def page(self, document, index=0, count=1):
-        return dict(input_path=str(self.pdfs[document]), page_index=index, page_count=count)
+        return dict(
+            input_path=str(self.pdfs[document]), page_index=index, page_count=count
+        )
 
-    def test_one_pipeline_and_one_full_batch_stream_into_separate_document_exports(self):
+    def test_one_pipeline_and_one_full_batch_stream_into_separate_document_exports(
+        self,
+    ):
         def pages(*, input):
             self.assertEqual(input, [str(p) for p in self.pdfs])
             yield self.page(0, 0, 2)
@@ -49,6 +68,7 @@ class PaddleBatchTests(unittest.TestCase):
             # First document must be saved before requesting later pages.
             self.assertEqual((self.output / "a/result.md").read_text(), "0,1")
             yield self.page(1)
+
         self.pipeline.predict_iter.side_effect = pages
         self.assertEqual(list(parse_pdfs(self.pdfs, self.output)), self.pdfs)
         self.factory.assert_called_once()
@@ -62,6 +82,7 @@ class PaddleBatchTests(unittest.TestCase):
         def pages(**kwargs):
             yield self.page(0)
             raise RuntimeError("native VLM error")
+
         self.pipeline.predict_iter.side_effect = pages
         results = parse_pdfs(self.pdfs, self.output)
         self.assertEqual(next(results), self.pdfs[0])
@@ -72,9 +93,11 @@ class PaddleBatchTests(unittest.TestCase):
         self.assertFalse((self.output / "b").exists())
 
     def test_missing_pages_cannot_be_exported_as_a_complete_document(self):
-        for pages in ([self.page(0, 0, 2)],
-                      [self.page(0, 0, 3), self.page(0, 2, 3)],
-                      [self.page(0, 0, 2), self.page(1)]):
+        for pages in (
+            [self.page(0, 0, 2)],
+            [self.page(0, 0, 3), self.page(0, 2, 3)],
+            [self.page(0, 0, 2), self.page(1)],
+        ):
             with self.subTest(pages=pages):
                 self.pipeline.predict_iter.return_value = iter(pages)
                 with self.assertRaisesRegex(RuntimeError, "Incomplete"):

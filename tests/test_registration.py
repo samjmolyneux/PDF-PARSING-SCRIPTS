@@ -1,4 +1,5 @@
 """Registration previews stay offline; applying uses the normal Azure SDK."""
+
 import contextlib
 import io
 import json
@@ -15,11 +16,15 @@ from admin import deploy_parsers, setup_compute
 class RegistrationTests(unittest.TestCase):
     def test_previews_do_not_authenticate_or_connect_even_without_config(self):
         for module in (deploy_parsers, setup_compute):
-            with self.subTest(module=module.__name__), \
-                 patch.object(sys, "argv", [module.__name__, "--config", "/missing/config.json"]), \
-                 patch.object(module, "AzureCliCredential") as credential, \
-                 patch.object(module, "MLClient") as client, \
-                 contextlib.redirect_stdout(io.StringIO()):
+            with (
+                self.subTest(module=module.__name__),
+                patch.object(
+                    sys, "argv", [module.__name__, "--config", "/missing/config.json"]
+                ),
+                patch.object(module, "AzureCliCredential") as credential,
+                patch.object(module, "MLClient") as client,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 module.main()
                 credential.assert_not_called()
                 client.assert_not_called()
@@ -27,17 +32,31 @@ class RegistrationTests(unittest.TestCase):
     def test_compute_targets_configured_workspace_and_waits_for_completion(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = Path(temporary) / "config.json"
-            config.write_text(json.dumps({"tenant_id": "tenant", "subscription_id": "sub",
-                                          "resource_group": "rg", "workspace": "ws"}))
+            config.write_text(
+                json.dumps(
+                    {
+                        "tenant_id": "tenant",
+                        "subscription_id": "sub",
+                        "resource_group": "rg",
+                        "workspace": "ws",
+                    }
+                )
+            )
             client = MagicMock()
             output = io.StringIO()
-            with patch.object(sys, "argv", ["setup_compute", "--apply", "--config", str(config)]), \
-                 patch.object(setup_compute, "AzureCliCredential") as credential, \
-                 patch.object(setup_compute, "MLClient", return_value=client) as factory, \
-                 contextlib.redirect_stdout(output):
+            with (
+                patch.object(
+                    sys, "argv", ["setup_compute", "--apply", "--config", str(config)]
+                ),
+                patch.object(setup_compute, "AzureCliCredential") as credential,
+                patch.object(setup_compute, "MLClient", return_value=client) as factory,
+                contextlib.redirect_stdout(output),
+            ):
                 setup_compute.main()
                 credential.assert_called_once_with(tenant_id="tenant")
-                factory.assert_called_once_with(credential.return_value, "sub", "rg", "ws")
+                factory.assert_called_once_with(
+                    credential.return_value, "sub", "rg", "ws"
+                )
                 client.compute.begin_create_or_update.assert_called_once()
                 compute = client.compute.begin_create_or_update.call_args.args[0]
                 self.assertEqual(compute.name, "pdf-parsers-a100")
@@ -49,7 +68,9 @@ class RegistrationTests(unittest.TestCase):
 
                 output.seek(0)
                 output.truncate()
-                poller.result.side_effect = HttpResponseError("Compute provisioning failed")
+                poller.result.side_effect = HttpResponseError(
+                    "Compute provisioning failed"
+                )
                 with self.assertRaises(HttpResponseError):
                     setup_compute.main()
                 self.assertNotIn("Compute configured:", output.getvalue())

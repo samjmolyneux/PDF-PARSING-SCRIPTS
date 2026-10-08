@@ -43,13 +43,13 @@ values with your workspace details. This example shows the required fields:
 }
 ```
 
-| Field | What to enter |
-| --- | --- |
-| `subscription_id` | The Azure subscription containing your workspace. |
-| `resource_group` | The resource group containing your workspace. |
-| `workspace` | The existing Azure ML workspace name. |
-| `tenant_id` | Your Microsoft Entra tenant ID, used for sign-in. |
-| `endpoint` | A name for this batch endpoint, unique within its Azure region. Use lowercase letters, numbers and hyphens. |
+| Field             | What to enter                                                                                               |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| `subscription_id` | The Azure subscription containing your workspace.                                                           |
+| `resource_group`  | The resource group containing your workspace.                                                               |
+| `workspace`       | The existing Azure ML workspace name.                                                                       |
+| `tenant_id`       | Your Microsoft Entra tenant ID, used for sign-in.                                                           |
+| `endpoint`        | A name for this batch endpoint, unique within its Azure region. Use lowercase letters, numbers and hyphens. |
 
 You can find the workspace identifiers in the Azure portal's workspace overview
 and the tenant ID in Microsoft Entra ID. The supplied file already targets

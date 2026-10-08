@@ -1,4 +1,5 @@
 """Exercise submission/resumption with the real SDK types and mocked services."""
+
 import contextlib
 import io
 import json
@@ -28,8 +29,13 @@ class ClientTests(unittest.TestCase):
         self.inputs = self.root / "input"
         self.inputs.mkdir()
         (self.inputs / "a.pdf").write_bytes(b"test PDF")
-        config = {"subscription_id": "sub", "resource_group": "rg", "workspace": "ws",
-                  "tenant_id": "tenant", "endpoint": "endpoint"}
+        config = {
+            "subscription_id": "sub",
+            "resource_group": "rg",
+            "workspace": "ws",
+            "tenant_id": "tenant",
+            "endpoint": "endpoint",
+        }
         self.config = self.root / "config.json"
         self.config.write_text(json.dumps(config))
         self.ml = MagicMock()
@@ -49,12 +55,16 @@ class ClientTests(unittest.TestCase):
             receipt = json.loads(self.receipt().read_text())
             self.assertEqual(receipt["state"], "submitting")
             self.assertEqual(kwargs["job_name"], receipt["job_name"])
-            expected_deployment = "paddle-vl" if receipt["parser"] == "paddle" else "mineru"
+            expected_deployment = (
+                "paddle-vl" if receipt["parser"] == "paddle" else "mineru"
+            )
             self.assertEqual(kwargs["deployment_name"], expected_deployment)
             staged = Path(kwargs["inputs"]["pdfs"].path)
             self.upload_directories.append(staged)
             self.assertNotEqual(staged, self.inputs)
-            self.assertEqual({p.name: p.read_bytes() for p in staged.iterdir()}, self.expected_upload)
+            self.assertEqual(
+                {p.name: p.read_bytes() for p in staged.iterdir()}, self.expected_upload
+            )
             self.assertEqual(kwargs["inputs"]["pdfs"].type, "uri_folder")
             self.assertNotIn("outputs", kwargs)
             self.events.append("invoked")
@@ -75,13 +85,15 @@ class ClientTests(unittest.TestCase):
         return next((self.root / "runs").glob("*.json"))
 
     def call(self, *args, parser="mineru"):
-        with patch.object(sys, "argv", [f"run-{parser}", *map(str, args)]), \
-             patch("azure.ai.ml.MLClient", self.ml_factory), \
-             patch("azure.identity.AzureCliCredential", self.azure_cli), \
-             patch("azure.identity.InteractiveBrowserCredential", self.browser), \
-             patch("azure.identity.DeviceCodeCredential", self.device_code), \
-             contextlib.redirect_stdout(io.StringIO()) as output, \
-             contextlib.redirect_stderr(io.StringIO()) as errors:
+        with (
+            patch.object(sys, "argv", [f"run-{parser}", *map(str, args)]),
+            patch("azure.ai.ml.MLClient", self.ml_factory),
+            patch("azure.identity.AzureCliCredential", self.azure_cli),
+            patch("azure.identity.InteractiveBrowserCredential", self.browser),
+            patch("azure.identity.DeviceCodeCredential", self.device_code),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
             code = {"mineru": mineru, "paddle": paddle}[parser].main()
         return code, output.getvalue() + errors.getvalue()
 
@@ -95,32 +107,45 @@ class ClientTests(unittest.TestCase):
         return receipt
 
     def cloud_report(self, receipt, **overrides):
-        report = {"parser": "mineru", "total": 1, "finished": True, "fatal_error": None,
-                  "documents": [{"input": "a.pdf", "status": "succeeded"}]}
+        report = {
+            "parser": "mineru",
+            "total": 1,
+            "finished": True,
+            "fatal_error": None,
+            "documents": [{"input": "a.pdf", "status": "succeeded"}],
+        }
         report.update(overrides)
         self.outputs["report.json"] = json.dumps(report).encode()
 
     def test_default_reuses_working_cli_login(self):
         self.submit()
         self.azure_cli.assert_called_once_with(tenant_id="tenant")
-        self.azure_cli.return_value.get_token.assert_called_once_with("https://management.azure.com/.default")
+        self.azure_cli.return_value.get_token.assert_called_once_with(
+            "https://management.azure.com/.default"
+        )
         self.assertIs(self.ml_factory.call_args.args[0], self.azure_cli.return_value)
         self.browser.assert_not_called()
 
     def test_default_falls_back_to_browser_when_cli_is_unavailable_or_expired(self):
-        for error in (CredentialUnavailableError("Please run az login"),
-                      ClientAuthenticationError("Login has expired")):
+        for error in (
+            CredentialUnavailableError("Please run az login"),
+            ClientAuthenticationError("Login has expired"),
+        ):
             with self.subTest(error=type(error).__name__):
                 self.azure_cli.return_value.get_token.side_effect = error
                 code, message = self.call(self.inputs, "--no-wait")
                 self.assertEqual(code, 0, message)
                 self.browser.assert_called_with(tenant_id="tenant")
-                self.assertIs(self.ml_factory.call_args.args[0], self.browser.return_value)
+                self.assertIs(
+                    self.ml_factory.call_args.args[0], self.browser.return_value
+                )
                 self.assertIn("opening browser sign-in", message)
                 self.receipt().unlink()
 
     def test_explicit_cli_login_does_not_fall_back(self):
-        self.ml.batch_endpoints.list_jobs.side_effect = ClientAuthenticationError("Please run az login")
+        self.ml.batch_endpoints.list_jobs.side_effect = ClientAuthenticationError(
+            "Please run az login"
+        )
         code, message = self.call(self.inputs, "--no-wait", "--az-login")
         self.assertEqual(code, 1)
         self.assertIn("Please run az login", message)
@@ -143,7 +168,9 @@ class ClientTests(unittest.TestCase):
         self.browser.assert_not_called()
 
     def test_workspace_permission_error_does_not_trigger_browser_fallback(self):
-        self.ml.batch_endpoints.list_jobs.side_effect = HttpResponseError("Forbidden: workspace access denied")
+        self.ml.batch_endpoints.list_jobs.side_effect = HttpResponseError(
+            "Forbidden: workspace access denied"
+        )
         code, message = self.call(self.inputs, "--no-wait")
         self.assertEqual(code, 1)
         self.assertIn("workspace access denied", message)
@@ -156,14 +183,20 @@ class ClientTests(unittest.TestCase):
         self.cloud_report(receipt)
         self.outputs["documents/a/result.md"] = b"all exports"
         # Resuming must work even while the endpoint has an unfinished job.
-        self.ml.batch_endpoints.list_jobs.side_effect = AssertionError("Resume must skip the busy check")
+        self.ml.batch_endpoints.list_jobs.side_effect = AssertionError(
+            "Resume must skip the busy check"
+        )
         destination = self.root / "downloaded"
         code, message = self.call("--resume", self.receipt(), "--output", destination)
         self.assertEqual(code, 0, message)
         self.assertEqual(self.events, ["invoked"])
-        self.assertEqual((destination / "documents/a/result.md").read_bytes(), b"all exports")
+        self.assertEqual(
+            (destination / "documents/a/result.md").read_bytes(), b"all exports"
+        )
         self.assertIn("1/1 PDFs succeeded", message)
-        self.ml.batch_endpoints.list_jobs.assert_called_once_with(endpoint_name="endpoint")
+        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
+            endpoint_name="endpoint"
+        )
         self.assertEqual(len(self.upload_directories), 1)
         self.assertFalse(self.upload_directories[0].exists())
 
@@ -180,7 +213,10 @@ class ClientTests(unittest.TestCase):
                 code, message = self.call(self.inputs, "--no-wait", parser=parser)
                 self.assertEqual(code, 0, message)
                 expected_deployment = "paddle-vl" if parser == "paddle" else "mineru"
-                self.assertEqual(self.ml.batch_endpoints.invoke.call_args.kwargs["deployment_name"], expected_deployment)
+                self.assertEqual(
+                    self.ml.batch_endpoints.invoke.call_args.kwargs["deployment_name"],
+                    expected_deployment,
+                )
                 self.assertFalse(self.upload_directories[-1].exists())
                 receipt_path = self.receipt()
                 receipt = json.loads(receipt_path.read_text())
@@ -213,10 +249,12 @@ class ClientTests(unittest.TestCase):
 
     def test_copy_failure_cleans_staging_and_never_uploads(self):
         destinations = []
+
         def fail_copy(source, destination):
             destinations.append(destination)
             destination.write_bytes(b"partial copy")
             raise OSError("disk full")
+
         with patch("pdf_parsers.client.shutil.copyfile", side_effect=fail_copy):
             code, message = self.call(self.inputs, "--no-wait")
         self.assertEqual(code, 1)
@@ -227,8 +265,18 @@ class ClientTests(unittest.TestCase):
 
     def test_busy_endpoint_blocks_both_parsers_before_upload_or_receipt(self):
         for parser, other in (("mineru", "paddle"), ("paddle", "mineru")):
-            for status in ("NotStarted", "Queued", "Preparing", "Provisioning", "Starting", "Running",
-                           "Finalizing", "CancelRequested", "Paused", None):
+            for status in (
+                "NotStarted",
+                "Queued",
+                "Preparing",
+                "Provisioning",
+                "Starting",
+                "Running",
+                "Finalizing",
+                "CancelRequested",
+                "Paused",
+                None,
+            ):
                 with self.subTest(parser=parser, status=status):
                     self.ml.batch_endpoints.list_jobs.return_value = [
                         SimpleNamespace(name="old-job", status="Completed"),
@@ -245,13 +293,23 @@ class ClientTests(unittest.TestCase):
     def test_finished_jobs_do_not_block_submission(self):
         self.ml.batch_endpoints.list_jobs.return_value = [
             SimpleNamespace(name=f"old-{status}", status=status)
-            for status in ("Completed", "Failed", "Canceled", "Cancelled", "NotResponding")
+            for status in (
+                "Completed",
+                "Failed",
+                "Canceled",
+                "Cancelled",
+                "NotResponding",
+            )
         ]
         self.submit()
-        self.ml.batch_endpoints.list_jobs.assert_called_once_with(endpoint_name="endpoint")
+        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
+            endpoint_name="endpoint"
+        )
 
     def test_job_listing_error_does_not_upload_or_submit(self):
-        self.ml.batch_endpoints.list_jobs.side_effect = RuntimeError("Cannot read endpoint jobs")
+        self.ml.batch_endpoints.list_jobs.side_effect = RuntimeError(
+            "Cannot read endpoint jobs"
+        )
         code, message = self.call(self.inputs, "--no-wait")
         self.assertEqual(code, 1)
         self.assertIn("Cannot read endpoint jobs", message)
@@ -261,7 +319,10 @@ class ClientTests(unittest.TestCase):
     def test_failed_job_downloads_available_exports_and_reports_failure(self):
         receipt = self.submit()
         self.ml.jobs.get.return_value.status = "Failed"
-        self.cloud_report(receipt, documents=[{"input": "a.pdf", "status": "failed", "error": "bad PDF"}])
+        self.cloud_report(
+            receipt,
+            documents=[{"input": "a.pdf", "status": "failed", "error": "bad PDF"}],
+        )
         self.outputs["server.log"] = b"diagnostic"
         self.outputs["documents/good/result.md"] = b"successful export"
         destination = self.root / "downloaded"
@@ -269,19 +330,26 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("FAILED: a.pdf: bad PDF", message)
         self.assertTrue((destination / "server.log").is_file())
-        self.assertEqual((destination / "documents/good/result.md").read_bytes(), b"successful export")
+        self.assertEqual(
+            (destination / "documents/good/result.md").read_bytes(),
+            b"successful export",
+        )
 
     def test_unconfirmed_results_are_not_mislabeled_as_known_pdf_failures(self):
         receipt = self.submit()
         self.ml.jobs.get.return_value.status = "Failed"
-        self.cloud_report(receipt, documents=[{"input": "a.pdf", "status": "unconfirmed"}])
+        self.cloud_report(
+            receipt, documents=[{"input": "a.pdf", "status": "unconfirmed"}]
+        )
         self.outputs["parser.log"] = b"native parser diagnostics"
         destination = self.root / "downloaded"
         code, message = self.call("--resume", self.receipt(), "--output", destination)
         self.assertEqual(code, 1)
         self.assertIn("UNCONFIRMED: a.pdf", message)
         self.assertNotIn("FAILED: a.pdf", message)
-        self.assertEqual((destination / "parser.log").read_bytes(), b"native parser diagnostics")
+        self.assertEqual(
+            (destination / "parser.log").read_bytes(), b"native parser diagnostics"
+        )
 
     def test_missing_parent_output_downloads_single_worker_output(self):
         receipt = self.submit()
@@ -297,8 +365,10 @@ class ClientTests(unittest.TestCase):
         code, message = self.call("--resume", self.receipt())
         self.assertEqual(code, 1)
         self.assertIn("BATCH FAILED: parser startup failed", message)
-        self.assertEqual([call.args[0] for call in self.ml.jobs.download.call_args_list],
-                         [receipt["job_name"], "worker-job"])
+        self.assertEqual(
+            [call.args[0] for call in self.ml.jobs.download.call_args_list],
+            [receipt["job_name"], "worker-job"],
+        )
 
     def test_stale_local_report_cannot_hide_missing_cloud_outputs(self):
         receipt = self.submit()
@@ -314,6 +384,7 @@ class ClientTests(unittest.TestCase):
     def test_ambiguous_submission_can_be_recovered_without_a_second_job(self):
         def uncertain(**kwargs):
             raise ConnectionError("Response lost after server accepted job")
+
         self.ml.batch_endpoints.invoke.side_effect = uncertain
         code, _ = self.call(self.inputs, "--config", self.config, "--no-wait")
         self.assertEqual(code, 1)
@@ -326,11 +397,13 @@ class ClientTests(unittest.TestCase):
 
     def test_interrupted_sdk_upload_leaves_receipt_and_resume_never_resubmits(self):
         staged_directories = []
+
         def interrupted(**kwargs):
             staged = Path(kwargs["inputs"]["pdfs"].path)
             self.assertEqual((staged / "a.pdf").read_bytes(), b"test PDF")
             staged_directories.append(staged)
             raise OSError("upload interrupted")
+
         self.ml.batch_endpoints.invoke.side_effect = interrupted
         code, _ = self.call(self.inputs, "--config", self.config, "--no-wait")
         self.assertEqual(code, 1)
@@ -350,27 +423,52 @@ class ClientTests(unittest.TestCase):
         self.cloud_report(receipt)
         code, message = self.call("--resume", self.receipt())
         self.assertEqual(code, 0, message)
-        self.assertTrue((self.root / "results" / receipt["run_id"] / "report.json").is_file())
+        self.assertTrue(
+            (self.root / "results" / receipt["run_id"] / "report.json").is_file()
+        )
 
     def test_real_sdk_download_layout_for_completed_and_failed_pipelines(self):
         ml = MLClient(MagicMock(), "sub", "rg", "ws")
         for status in ("Completed", "Failed"):
-            job = SimpleNamespace(name="job", status=status, properties={},
-                                  tags={"azureml.batchrun": "true", "azureml.jobtype": "azureml.pipelinejob"})
+            job = SimpleNamespace(
+                name="job",
+                status=status,
+                properties={},
+                tags={
+                    "azureml.batchrun": "true",
+                    "azureml.jobtype": "azureml.pipelinejob",
+                },
+            )
 
             def transfer(*, uri, destination, datastore_operation):
-                self.assertEqual(Path(destination).parts[-2:], ("named-outputs", "results"))
+                self.assertEqual(
+                    Path(destination).parts[-2:], ("named-outputs", "results")
+                )
                 Path(destination).mkdir(parents=True)
                 (Path(destination) / "report.json").write_text('{"finished": true}')
                 (Path(destination) / "export.md").write_text("export")
 
-            with self.subTest(status=status), \
-                 patch("azure.core.pipeline.transport.RequestsTransport.send", side_effect=AssertionError("No network in tests")), \
-                 patch.object(ml.jobs, "get", return_value=job), \
-                 patch.object(ml.jobs, "_get_named_output_uri", return_value={"results": "azureml://test"}), \
-                 patch("azure.ai.ml.operations._job_operations.download_artifact_from_aml_uri", side_effect=transfer):
+            with (
+                self.subTest(status=status),
+                patch(
+                    "azure.core.pipeline.transport.RequestsTransport.send",
+                    side_effect=AssertionError("No network in tests"),
+                ),
+                patch.object(ml.jobs, "get", return_value=job),
+                patch.object(
+                    ml.jobs,
+                    "_get_named_output_uri",
+                    return_value={"results": "azureml://test"},
+                ),
+                patch(
+                    "azure.ai.ml.operations._job_operations.download_artifact_from_aml_uri",
+                    side_effect=transfer,
+                ),
+            ):
                 destination = self.root / status
-                self.assertEqual(download_results(ml, "job", destination), {"finished": True})
+                self.assertEqual(
+                    download_results(ml, "job", destination), {"finished": True}
+                )
                 self.assertEqual((destination / "export.md").read_text(), "export")
 
 

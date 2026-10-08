@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
 name: pdf_mineru_pipeline
-version: '5'
+version: "5"
 type: pipeline
 inputs:
   pdfs:
@@ -15,14 +15,14 @@ jobs:
     component: ./mineru-command.yml
     # Runtime variables belong to this job, not the reusable command component.
     environment_variables:
-      PYTHONUNBUFFERED: '1'
-      HF_HUB_OFFLINE: '1'
+      PYTHONUNBUFFERED: "1"
+      HF_HUB_OFFLINE: "1"
       MINERU_MODEL_SOURCE: local
       # Allow long native tasks to run up to Azure's whole-job deadline.
-      MINERU_TASK_RESULT_TIMEOUT_SECONDS: '86400'
+      MINERU_TASK_RESULT_TIMEOUT_SECONDS: "86400"
     inputs:
       pdfs: ${{parent.inputs.pdfs}}
     outputs:
       results: ${{parent.outputs.results}}
     limits:
-      timeout: 86400  # 24 hours for the whole batch.
+      timeout: 86400 # 24 hours for the whole batch.

@@ -1,0 +1,8 @@
+---
+config:
+  # Parser labels introduce alternative commands without extra navigation headings.
+  MD036: false
+  MD033:
+    allowed_elements:
+      - span
+      - div

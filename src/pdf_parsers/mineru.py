@@ -1,4 +1,5 @@
 """Upload PDFs, invoke the MinerU deployment and download its exports."""
+
 from .client import main as run
 
 
