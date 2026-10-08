@@ -1,11 +1,18 @@
 """One native Paddle batch; yield each PDF after its merged exports are saved."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 
-def parse_pdfs(pdfs, output):
-    from paddleocr import PaddleOCRVL
+def parse_pdfs(pdfs: Sequence[Path], output: Path) -> Iterator[Path]:
+    # Load Paddle only for this parser; the MinerU image does not need it.
+    from paddleocr import PaddleOCRVL  # noqa: PLC0415
 
     pipeline = PaddleOCRVL(
         pipeline_version="v1.6",
@@ -37,7 +44,8 @@ def parse_pdfs(pdfs, output):
                 )
             )
         ):
-            raise RuntimeError(f"Incomplete or out-of-order Paddle pages: {pdf.name}")
+            msg = f"Incomplete or out-of-order Paddle pages: {pdf.name}"
+            raise RuntimeError(msg)
         pages.append(page)
         if len(pages) < page["page_count"]:
             continue
@@ -58,8 +66,10 @@ def parse_pdfs(pdfs, output):
             if not any(
                 p.stat().st_size for p in destination.rglob(f"*{suffix}") if p.is_file()
             ):
-                raise RuntimeError(f"Missing {suffix} export: {pdf.name}")
+                msg = f"Missing {suffix} export: {pdf.name}"
+                raise RuntimeError(msg)
         pages = []
         yield pdf
     if pages:
-        raise RuntimeError(f"Incomplete Paddle pages: {pages[0]['input_path']}")
+        msg = f"Incomplete Paddle pages: {pages[0]['input_path']}"
+        raise RuntimeError(msg)

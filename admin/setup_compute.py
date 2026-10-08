@@ -10,7 +10,7 @@ from azure.identity import AzureCliCredential
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main() -> None:
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--config", type=Path, default=ROOT / "config.json")
     cli.add_argument(
@@ -23,7 +23,8 @@ def main():
     print(f"  Nodes: minimum {compute.min_instances}, maximum {compute.max_instances}")
     if not args.apply:
         print(
-            "Preview only. Add --apply to configure compute; no Azure connection was made."
+            "Preview only. Add --apply to configure compute; "
+            "no Azure connection was made."
         )
         return
 

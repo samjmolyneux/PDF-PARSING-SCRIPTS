@@ -39,3 +39,9 @@
   their image model paths. Neither new image has been built or run by this local
   change. MinerU's fresh builds may resolve newer upstream weight revisions;
   jobs reuse the weights already in their built image.
+
+- [ ] Remove PDF files from the repository.
+- [ ] Decide whether to remove `config.json` from the repository.
+- [ ] Remove `local todo.md` from the repository, keeping it locally.
+- [ ] Add tox to the test dependency group and configure it to run the tests
+      across supported Python versions, following Flowde's setup.

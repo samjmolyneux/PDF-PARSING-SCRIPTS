@@ -15,7 +15,7 @@ from azure.identity import AzureCliCredential
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main():
+def main() -> None:
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument("--parser", choices=["mineru", "paddle", "both"], default="both")
     cli.add_argument("--config", type=Path, default=ROOT / "config.json")
@@ -37,13 +37,15 @@ def main():
             f"Parser: {parser}\n  Environment: {environment.name}:{environment.version}"
         )
         print(
-            f"  Pipeline: {pipeline.name}:{pipeline.version}\n  Deployment: {deployment.name}"
+            f"  Pipeline: {pipeline.name}:{pipeline.version}\n"
+            f"  Deployment: {deployment.name}"
         )
         print(f"  Compute: {deployment.settings['default_compute']}")
     endpoint = load_batch_endpoint(ROOT / "azure/endpoint.yml")
     if not args.apply:
         print(
-            f"Preview only. Add --apply to deploy using {args.config}; no Azure connection was made."
+            f"Preview only. Add --apply to deploy using {args.config}; "
+            "no Azure connection was made."
         )
         return
 
@@ -79,7 +81,8 @@ def main():
         print(f"Deploying parser: {deployment.name}", flush=True)
         client.batch_deployments.begin_create_or_update(deployment).result()
     print(
-        "Parser deployments configured. Check environment build status, then run the smoke test."
+        "Parser deployments configured. Check environment build status, "
+        "then run the smoke test."
     )
     print("No parsing job was submitted.")
 

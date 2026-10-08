@@ -3,7 +3,7 @@
 from .client import main as run
 
 
-def main():
+def main() -> int:
     return run("mineru")
 
 

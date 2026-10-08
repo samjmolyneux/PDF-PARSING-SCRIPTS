@@ -11,38 +11,49 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from azure.ai.ml import MLClient
 
 TERMINAL = {"Completed", "Failed", "Canceled", "Cancelled", "NotResponding"}
 DEPLOYMENT_NAMES = {"mineru": "mineru", "paddle": "paddle-vl"}
 
 
-def save_json(path, value):
+def save_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
 
 
-def pdf_files(folder):
+def pdf_files(folder: Path) -> tuple[Path, list[Path]]:
     folder = folder.resolve(strict=True)
     if not folder.is_dir():
-        raise ValueError("Input must be a directory of PDFs.")
+        msg = "Input must be a directory of PDFs."
+        raise ValueError(msg)
     files = sorted(
         p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"
     )
     if not files:
-        raise ValueError(f"No PDFs found in {folder}")
+        msg = f"No PDFs found in {folder}"
+        raise ValueError(msg)
     for path in files:
         if path.is_symlink():
-            raise ValueError(f"Copy linked PDFs into the input folder first: {path}")
+            msg = f"Copy linked PDFs into the input folder first: {path}"
+            raise ValueError(msg)
     if len({p.stem.casefold() for p in files}) != len(files):
-        raise ValueError(
-            "PDF filenames must be distinct, including when compared without letter case."
+        msg = (
+            "PDF filenames must be distinct, including when compared "
+            "without letter case."
         )
+        raise ValueError(msg)
     return folder, files
 
 
-def download_results(ml, job_name, destination):
+def download_results(ml: MLClient, job_name: str, destination: Path) -> dict[str, Any]:
     """Use Azure's downloader, then flatten its named-outputs/results directory."""
     destination = destination.resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -62,13 +73,17 @@ def download_results(ml, job_name, destination):
         if results.is_dir():
             shutil.copytree(results, destination, dirs_exist_ok=True)
         if not (results / "report.json").is_file():
-            raise RuntimeError(
-                "Incomplete: no report was downloaded. Check Azure job logs and whether output files still exist."
+            msg = (
+                "Incomplete: no report was downloaded. Check Azure job logs "
+                "and whether output files still exist."
             )
+            raise RuntimeError(msg)
         return json.loads((results / "report.json").read_text(encoding="utf-8"))
 
 
-def report_success(report, receipt, status):
+def report_success(
+    report: dict[str, Any], receipt: dict[str, Any], status: str | None
+) -> bool:
     documents = report.get("documents", [])
     return (
         status == "Completed"
@@ -82,19 +97,25 @@ def report_success(report, receipt, status):
     )
 
 
-def main(parser_name, argv=None):
+def main(parser_name: str, argv: Sequence[str] | None = None) -> int:
     """Run the client; explicit arguments also allow calls from notebooks."""
     working_dir = Path.cwd()
     cli = argparse.ArgumentParser(
         prog=f"run-{parser_name}",
-        description=f"Run {parser_name} on Azure ML. Sign-in defaults to Azure CLI, then browser if unavailable.",
+        description=(
+            f"Run {parser_name} on Azure ML. "
+            "Sign-in defaults to Azure CLI, then browser if unavailable."
+        ),
     )
     source = cli.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "input",
         nargs="?",
         type=Path,
-        help="Upload only PDFs directly inside this folder; ignore other files and subfolders",
+        help=(
+            "Upload only PDFs directly inside this folder; "
+            "ignore other files and subfolders"
+        ),
     )
     source.add_argument(
         "--resume", type=Path, help="Receipt JSON from an already submitted job"
@@ -132,16 +153,17 @@ def main(parser_name, argv=None):
         if args.resume:
             receipt = json.loads(args.resume.read_text(encoding="utf-8"))
             if receipt["parser"] != parser_name:
-                raise ValueError(f"Use run-{receipt['parser']} for this receipt.")
+                msg = f"Use run-{receipt['parser']} for this receipt."
+                raise ValueError(msg)
             config = receipt["config"]
         else:
             config = json.loads(args.config.read_text(encoding="utf-8"))
             folder, files = pdf_files(args.input)
 
         # Lazy imports make --help and local tests independent of the Azure SDK.
-        from azure.ai.ml import Input, MLClient
-        from azure.core.exceptions import ClientAuthenticationError
-        from azure.identity import (
+        from azure.ai.ml import Input, MLClient  # noqa: PLC0415
+        from azure.core.exceptions import ClientAuthenticationError  # noqa: PLC0415
+        from azure.identity import (  # noqa: PLC0415
             AzureCliCredential,
             DeviceCodeCredential,
             InteractiveBrowserCredential,
@@ -179,11 +201,16 @@ def main(parser_name, argv=None):
                 endpoint_name=config["endpoint"]
             ):
                 if existing.status not in TERMINAL:
-                    raise RuntimeError(
-                        f"Parser endpoint is busy: job {existing.name} is {existing.status}. "
+                    msg = (
+                        f"Parser endpoint is busy: job {existing.name} "
+                        f"is {existing.status}. "
                         "No PDFs were uploaded. Please try again later."
                     )
-            run_id = f"{parser_name}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:10]}"
+                    raise RuntimeError(msg)
+            run_id = (
+                f"{parser_name}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-"
+                f"{uuid.uuid4().hex[:10]}"
+            )
             receipt = {
                 "parser": parser_name,
                 "run_id": run_id,
@@ -199,7 +226,8 @@ def main(parser_name, argv=None):
             # The SDK uploads a whole folder during invoke. Stage only the selected
             # PDFs so unrelated files and local ignore rules cannot affect the batch.
             print(
-                f"Preparing and uploading {len(files)} PDFs from: {folder}\nReceipt: {receipt_path}",
+                f"Preparing and uploading {len(files)} PDFs from: {folder}\n"
+                f"Receipt: {receipt_path}",
                 flush=True,
             )
             with tempfile.TemporaryDirectory(prefix="pdf-parser-upload-") as temporary:
@@ -242,24 +270,30 @@ def main(parser_name, argv=None):
         for document in failed:
             label = "FAILED" if document.get("status") == "failed" else "UNCONFIRMED"
             print(
-                f"{label}: {document['input']}: {document.get('error') or 'See report.json and parser.log.'}",
+                f"{label}: {document['input']}: "
+                f"{document.get('error') or 'See report.json and parser.log.'}",
                 file=sys.stderr,
             )
         if not report_success(report, receipt, status):
-            raise RuntimeError(
-                f"Incomplete batch. Inspect {destination / 'report.json'} and Azure job logs."
+            msg = (
+                f"Incomplete batch. Inspect {destination / 'report.json'} "
+                "and Azure job logs."
             )
+            raise RuntimeError(msg)
         print(
             f"Complete: {receipt['pdf_count']}/{receipt['pdf_count']} PDFs succeeded."
         )
-        return 0
     except KeyboardInterrupt:
         print("\nClient stopped. Any accepted Azure job continues.", file=sys.stderr)
-    except Exception as error:
+    # Report any client error and show the receipt so an accepted job is recoverable.
+    except Exception as error:  # noqa: BLE001
         print(f"Error: {error}", file=sys.stderr)
+    else:
+        return 0
     if receipt_path:
         print(
-            f"Receipt: {receipt_path}. Check it and Azure job status before submitting again.",
+            f"Receipt: {receipt_path}. "
+            "Check it and Azure job status before submitting again.",
             file=sys.stderr,
         )
     return 1

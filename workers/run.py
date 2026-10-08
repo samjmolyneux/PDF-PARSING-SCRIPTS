@@ -11,7 +11,9 @@ import subprocess
 import time
 import traceback
 import urllib.request
+from http import HTTPStatus
 from pathlib import Path
+from typing import Any, BinaryIO
 
 if __package__:
     from .paddle_batch import parse_pdfs
@@ -19,7 +21,7 @@ else:
     from paddle_batch import parse_pdfs
 
 
-def write_report(output, report):
+def write_report(output: Path, report: dict[str, Any]) -> None:
     temporary = output / "report.json.tmp"
     temporary.write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
@@ -27,7 +29,7 @@ def write_report(output, report):
     temporary.replace(output / "report.json")
 
 
-def stop_process(process):
+def stop_process(process: subprocess.Popen[bytes] | None) -> None:
     if process is None:
         return
     # The Paddle server can leave vLLM children after its parent exits.
@@ -35,24 +37,22 @@ def stop_process(process):
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         return
-    try:
+    with contextlib.suppress(subprocess.TimeoutExpired):
         process.wait(timeout=15)
-    except subprocess.TimeoutExpired:
-        pass
-    try:
+    with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     process.wait()
 
 
-def server_command():
+def server_command() -> tuple[list[str], str]:
     python, cli = os.environ["PADDLE_SERVER_PYTHON"], os.environ["PADDLE_SERVER_CLI"]
     for file in (python, cli):
         if not Path(file).is_file():
-            raise FileNotFoundError(
-                f"Base image server executable missing: {file}; check azure/paddle-pipeline.yml"
+            msg = (
+                f"Base image server executable missing: {file}; "
+                "check azure/paddle-pipeline.yml"
             )
+            raise FileNotFoundError(msg)
     return [
         "bash",
         str(Path(__file__).with_name("start_paddle_server.sh")),
@@ -75,32 +75,34 @@ def server_command():
     ], "http://127.0.0.1:8118/health"
 
 
-def start_server(log, timeout=1200):
+def start_server(log: BinaryIO, timeout: float = 1200) -> subprocess.Popen[bytes]:
     command, health = server_command()
-    process = subprocess.Popen(
+    # Fixed launcher and image-configured executables; arguments stay separate.
+    process = subprocess.Popen(  # noqa: S603
         command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
     )
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError(
-                    f"Model server exited ({process.returncode}); see server.log"
-                )
+                msg = f"Model server exited ({process.returncode}); see server.log"
+                raise RuntimeError(msg)
             try:
-                with urllib.request.urlopen(health, timeout=5) as response:
-                    if response.status == 200:
+                # server_command supplies a fixed loopback HTTP health URL.
+                with urllib.request.urlopen(health, timeout=5) as response:  # noqa: S310
+                    if response.status == HTTPStatus.OK:
                         return process
             except (OSError, TimeoutError):
                 pass
             time.sleep(2)
-        raise TimeoutError("Model server did not become ready; see server.log")
+        msg = "Model server did not become ready; see server.log"
+        raise TimeoutError(msg)
     except BaseException:
         stop_process(process)
         raise
 
 
-def process_batch(parser, input_dir, output):
+def process_batch(parser: str, input_dir: Path, output: Path) -> int:
     input_dir, output = input_dir.resolve(), output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     pdfs = sorted(
@@ -125,23 +127,26 @@ def process_batch(parser, input_dir, output):
     with (output / "parser.log").open("w", encoding="utf-8", buffering=1) as log:
         try:
             if not pdfs:
-                raise ValueError("No PDFs in the submitted input.")
+                msg = "No PDFs in the submitted input."
+                raise ValueError(msg)
             if any(
                 p.is_symlink() or not p.is_file() or p.suffix.lower() != ".pdf"
                 for p in input_dir.iterdir()
             ):
-                raise ValueError(
-                    "Use a flat folder containing only PDFs; copy linked files first."
-                )
+                msg = "Use a flat folder containing only PDFs; copy linked files first."
+                raise ValueError(msg)
             if len({p.stem.casefold() for p in pdfs}) != len(pdfs):
-                raise ValueError("PDF filenames must be distinct without letter case.")
+                msg = "PDF filenames must be distinct without letter case."
+                raise ValueError(msg)
             os.environ["PYTHONNOUSERSITE"] = "1"
             exports = output / "documents"
             exports.mkdir(exist_ok=True)
             if parser == "mineru":
                 # One folder call. MinerU owns its server, task scheduling and cleanup.
-                subprocess.run(
-                    [
+                # Fixed command/options; resolved paths are separate arguments.
+                # Resolve the installed MinerU executable through the image's PATH.
+                subprocess.run(  # noqa: S603
+                    [  # noqa: S607
                         "mineru",
                         "-p",
                         str(input_dir),
@@ -168,7 +173,7 @@ def process_batch(parser, input_dir, output):
                 )
                 # A zero exit can still omit unrecognised inputs. Check exports
                 # only after success; partial files from a failed run prove nothing.
-                for pdf, item in zip(pdfs, report["documents"]):
+                for pdf, item in zip(pdfs, report["documents"], strict=True):
                     found = {
                         p.suffix.lower()
                         for p in (exports / pdf.stem).rglob("*")
@@ -178,7 +183,8 @@ def process_batch(parser, input_dir, output):
                         item["status"] = "succeeded"
                     else:
                         item["error"] = (
-                            "Expected exports not found; inspect parser.log and documents/ (MinerU may rename long filenames)."
+                            "Expected exports not found; inspect parser.log and "
+                            "documents/ (MinerU may rename long filenames)."
                         )
             else:
                 documents = {item["input"]: item for item in report["documents"]}
@@ -193,8 +199,10 @@ def process_batch(parser, input_dir, output):
                             write_report(output, report)
             report["finished"] = True
             if any(item["status"] != "succeeded" for item in report["documents"]):
-                raise RuntimeError("Parser did not confirm every PDF; see parser.log.")
-        except Exception as error:
+                msg = "Parser did not confirm every PDF; see parser.log."
+                raise RuntimeError(msg)
+        # Record any parser failure while preserving partial exports and cleanup.
+        except Exception as error:  # noqa: BLE001
             report["fatal_error"] = f"{type(error).__name__}: {error}"
             traceback.print_exc(file=log)
             print(report["fatal_error"], flush=True)
@@ -203,7 +211,8 @@ def process_batch(parser, input_dir, output):
             write_report(output, report)
     failures = sum(item["status"] != "succeeded" for item in report["documents"])
     print(
-        f"Finished: {len(pdfs) - failures}/{len(pdfs)} PDFs confirmed; {failures} unconfirmed. See parser.log.",
+        f"Finished: {len(pdfs) - failures}/{len(pdfs)} PDFs confirmed; "
+        f"{failures} unconfirmed. See parser.log.",
         flush=True,
     )
     return 1 if failures or report["fatal_error"] else 0

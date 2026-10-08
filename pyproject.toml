@@ -29,10 +29,61 @@ run-mineru = "pdf_parsers.mineru:main"
 run-paddle = "pdf_parsers.paddle:main"
 
 [tool.ruff]
+show-fixes = true
 target-version = "py310"
 
+[tool.ruff.format]
+docstring-code-format = true
+
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+ignore = [
+    "ANN002",  # Args needs type hint
+    "ANN003",  # Kwargs needs type hint
+    "ANN401",  # Disallow `Any` in annotations.
+    "C901",  # Function too complex (McCabe).
+    "COM812",  # Missing trailing comma (multi-line).
+    "CPY001",  # Missing copyright notice.
+    "D100",  # Missing docstring in public module.
+    "D101",  # Missing docstring in public class.
+    "D102",  # Missing docstring in public method.
+    "D103",  # Missing docstring in public function.
+    "D104",  # Missing docstring in public package.
+    "D105",  # Missing docstring in magic method.
+    "D107",  # Missing docstring in __init__
+    "D203",  # Blank line before class docstring.
+    "D212",  # Multi-line docstring summary on first line.
+    "FBT001",  # Boolean positional arg in definition.
+    "FBT002",  # Boolean default for positional arg.
+    "FIX002",  # Line contains todo
+    "N803",  # Argument name not snake_case.
+    "N806",  # Non-lowercase variable in function.
+    "PGH004",  # use specific rule codes with noqa
+    "PLR0912",  # Too many branches.
+    "PLR0913",  # Too many arguments.
+    "PLR0915",  # Too many statements.
+    "RET504",  # Unnecessary assign before return.
+    "S106",  # Hardcoded password in call.
+    "S311",  # Weak cryptographic random number generator.
+    "T201",  # `print` found.
+    "T203",  # `pprint` found.
+    "TD002",  # Missing author in todo
+    "TD003",  # Missing issue link in todo
+    "TRY301"  # Validation raises intentionally use shared error handling.
+]
+select = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"admin/**/*.py" = ["ERA001", "INP001"]
+"tests/**/*.py" = [
+    "ANN",  # Type annotations are not required in tests.
+    "ARG001",  # Fixture arguments can be used only for their setup side effects.
+    "ARG005",  # Test doubles may need unused arguments to match a callable signature.
+    "PLR0917",  # Parametrized tests can require many fixtures and case values.
+    "PLR2004",  # Literal expected values make test assertions clearer.
+    "S101",  # Plain assert statements are how pytest performs checks.
+    "SLF001"  # Tests may need to exercise or reset private implementation details.
+]
+"workers/**/*.py" = ["ERA001", "INP001"]
 
 [tool.setuptools]
 include-package-data = false

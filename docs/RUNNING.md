@@ -69,8 +69,8 @@ submit the job, then download the results later:
 run-paddle "./pdfs" --no-wait
 ```
 
-The command returns once the PDFs have been uploaded and Azure has accepted
-the job; parsing continues in Azure. **Wait for `Submitted` before closing your
+The command returns once the PDFs have been uploaded and Azure has accepted the
+job; parsing continues in Azure. **Wait for `Submitted` before closing your
 laptop.** The client prints a ready-to-copy `Later:` command for retrieving the
 results, along with the path to a small receipt file in `./runs/`. Keep that
 file: it identifies your job and its workspace.
@@ -93,11 +93,11 @@ in the receipt: supply `--output` again if you want one.
 
 ### If your local process stops
 
-You can also retrieve results after an interruption, even if you started the
-job **without `--no-wait`**. Every submitted job has a receipt in `./runs/`.
-Once Azure has accepted the job, closing the terminal, losing your connection
-or pressing **Ctrl+C** does not cancel processing. Use `--resume` with that
-receipt to reconnect and download the results.
+You can also retrieve results after an interruption, even if you started the job
+**without `--no-wait`**. Every submitted job has a receipt in `./runs/`. Once
+Azure has accepted the job, closing the terminal, losing your connection or
+pressing **Ctrl+C** does not cancel processing. Use `--resume` with that receipt
+to reconnect and download the results.
 
 To cancel processing itself, cancel the job in Azure ML Studio.
 
