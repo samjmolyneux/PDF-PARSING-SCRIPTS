@@ -259,16 +259,41 @@ class TestWorkflow:
             assert worker.process_batch("mineru", self.inputs, self.output) == 1
         run.assert_not_called()
 
-    def test_case_insensitive_name_collisions_are_rejected(self):
-        self.pdf("same.pdf")
-        self.pdf("same.PDF")
+    @pytest.mark.parametrize("target", ["client", "mineru", "paddle"])
+    def test_case_insensitive_name_collisions_are_rejected(self, target):
+        entries = [self.pdf("same.pdf"), self.pdf("SAME.pdf")]
         # Simulate a Linux directory listing even on a case-insensitive Mac.
-        entries = [self.inputs / "same.pdf", self.inputs / "same.PDF"]
-        with (
-            patch.object(Path, "iterdir", return_value=iter(entries)),
-            pytest.raises(ValueError, match="distinct"),
-        ):
-            client.pdf_files(self.inputs)
+        # Each scan needs a fresh iterator: the worker reads the folder twice.
+        with patch.object(Path, "iterdir", side_effect=lambda: iter(entries)):
+            if target == "client":
+                with pytest.raises(ValueError, match="distinct"):
+                    client.pdf_files(self.inputs)
+                return
+            with (
+                patch.object(worker.subprocess, "run") as run,
+                patch.object(worker, "start_server") as start,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = worker.process_batch(target, self.inputs, self.output)
+
+        assert code == 1
+        run.assert_not_called()
+        start.assert_not_called()
+        report = self.report()
+        assert report["parser"] == target
+        assert report["total"] == 2
+        assert report["finished"] is False
+        assert "PDF filenames must be distinct" in report["fatal_error"]
+        assert {item["input"] for item in report["documents"]} == {
+            pdf.name for pdf in entries
+        }
+        assert [item["status"] for item in report["documents"]] == [
+            "unconfirmed",
+            "unconfirmed",
+        ]
+        assert (
+            "PDF filenames must be distinct" in (self.output / "parser.log").read_text()
+        )
 
     def test_linked_pdf_is_rejected(self):
         outside = self.root / "outside.pdf"

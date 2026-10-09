@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from azure.ai.ml import MLClient
@@ -198,6 +198,11 @@ class TestClient:
         assert receipt["pdfs"] == ["a.pdf"]
         self.cloud_report(receipt)
         self.outputs["documents/a/result.md"] = b"all exports"
+        self.ml.jobs.get.side_effect = [
+            SimpleNamespace(status="Running"),
+            SimpleNamespace(status="Running"),
+            SimpleNamespace(status="Completed"),
+        ]
         # Resuming must work even while the endpoint has an unfinished job.
         self.ml.batch_endpoints.list_jobs.side_effect = AssertionError(
             "Resume must skip the busy check"
@@ -210,8 +215,13 @@ class TestClient:
         args = ["--resume", self.receipt()]
         if not use_defaults:
             args += ["--output", destination]
-        code, message = self.call(*args)
+        with patch("pdf_parsers.client.time.sleep") as sleep:
+            code, message = self.call(*args)
         assert code == 0, message
+        assert self.ml.jobs.get.call_args_list == [call(receipt["job_name"])] * 3
+        assert sleep.call_args_list == [call(30), call(30)]
+        assert message.count("Azure job: Running") == 1
+        assert message.count("Azure job: Completed") == 1
         assert self.events == ["invoked"]
         assert (destination / "report.json").is_file()
         assert (destination / "documents/a/result.md").read_bytes() == b"all exports"
@@ -221,6 +231,48 @@ class TestClient:
         )
         assert len(self.upload_directories) == 1
         assert not self.upload_directories[0].exists()
+
+    @pytest.mark.parametrize("parser", ["mineru", "paddle"])
+    def test_keyboard_interrupt_preserves_receipt_and_resume_never_resubmits(
+        self, parser
+    ):
+        self.ml.jobs.get.return_value.status = "Running"
+        with patch(
+            "pdf_parsers.client.time.sleep", side_effect=KeyboardInterrupt
+        ) as sleep:
+            code, message = self.call(
+                self.inputs, "--config", self.config, parser=parser
+            )
+        assert code == 1
+        assert "Client stopped. Any accepted Azure job continues." in message
+        sleep.assert_called_once_with(30)
+        receipt_path = self.receipt()
+        receipt = json.loads(receipt_path.read_text())
+        assert receipt["parser"] == parser
+        assert receipt["state"] == "submitted"
+        assert f"Receipt: {receipt_path}." in message
+        self.ml.jobs.get.assert_called_once_with(receipt["job_name"])
+        self.ml.jobs.download.assert_not_called()
+        self.ml.jobs.cancel.assert_not_called()
+        assert len(self.upload_directories) == 1
+        assert not self.upload_directories[0].exists()
+        assert (self.inputs / "a.pdf").read_bytes() == b"test PDF"
+
+        self.cloud_report(receipt, parser=parser)
+        self.outputs["documents/a/result.md"] = b"all exports"
+        self.ml.jobs.get.return_value.status = "Completed"
+        code, message = self.call("--resume", receipt_path, parser=parser)
+        assert code == 0, message
+        assert "1/1 PDFs succeeded" in message
+        destination = self.root / "results" / receipt["run_id"]
+        assert (destination / "documents/a/result.md").read_bytes() == b"all exports"
+        assert json.loads(receipt_path.read_text()) == receipt
+        self.ml.batch_endpoints.invoke.assert_called_once()
+        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
+            endpoint_name="endpoint"
+        )
+        self.ml.jobs.cancel.assert_not_called()
+        assert len(self.upload_directories) == 1
 
     @pytest.mark.parametrize(
         "parser, deployment", [("mineru", "mineru"), ("paddle", "paddle-vl")]
@@ -254,6 +306,18 @@ class TestClient:
         assert code == 0, message
         assert json.loads(self.receipt().read_text())["pdfs"] == ["a.pdf"]
         assert not self.upload_directories[0].exists()
+
+    @pytest.mark.parametrize("parser", ["mineru", "paddle"])
+    def test_input_file_is_rejected_before_contacting_azure(self, parser):
+        code, message = self.call(self.inputs / "a.pdf", "--no-wait", parser=parser)
+        assert code == 1
+        assert "Input must be a directory of PDFs." in message
+        self.azure_cli.assert_not_called()
+        self.browser.assert_not_called()
+        self.device_code.assert_not_called()
+        self.ml_factory.assert_not_called()
+        self.ml.batch_endpoints.invoke.assert_not_called()
+        assert not (self.root / "runs").exists()
 
     def test_no_direct_pdfs_does_not_contact_azure_or_submit(self):
         (self.inputs / "a.pdf").unlink()
