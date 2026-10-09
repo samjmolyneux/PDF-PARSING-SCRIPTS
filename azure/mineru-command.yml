@@ -1,10 +1,10 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
 name: pdf_mineru_command
-version: "5"
+version: "11"
 type: command
 is_deterministic: false
 code: ../workers
-environment: azureml:pdf-mineru:5
+environment: azureml:pdf-mineru:11
 inputs:
   pdfs:
     type: uri_folder

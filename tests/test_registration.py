@@ -1,80 +1,78 @@
 """Registration previews stay offline; applying uses the normal Azure SDK."""
 
-import contextlib
-import io
 import json
-from pathlib import Path
 import sys
-import tempfile
-import unittest
-from unittest.mock import MagicMock, patch
+from contextlib import nullcontext
+from unittest.mock import MagicMock
 
+import pytest
 from azure.core.exceptions import HttpResponseError
+
 from admin import deploy_parsers, setup_compute
 
 
-class RegistrationTests(unittest.TestCase):
-    def test_previews_do_not_authenticate_or_connect_even_without_config(self):
-        for module in (deploy_parsers, setup_compute):
-            with (
-                self.subTest(module=module.__name__),
-                patch.object(
-                    sys, "argv", [module.__name__, "--config", "/missing/config.json"]
-                ),
-                patch.object(module, "AzureCliCredential") as credential,
-                patch.object(module, "MLClient") as client,
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                module.main()
-                credential.assert_not_called()
-                client.assert_not_called()
-
-    def test_compute_targets_configured_workspace_and_waits_for_completion(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            config = Path(temporary) / "config.json"
-            config.write_text(
-                json.dumps(
-                    {
-                        "tenant_id": "tenant",
-                        "subscription_id": "sub",
-                        "resource_group": "rg",
-                        "workspace": "ws",
-                    }
-                )
-            )
-            client = MagicMock()
-            output = io.StringIO()
-            with (
-                patch.object(
-                    sys, "argv", ["setup_compute", "--apply", "--config", str(config)]
-                ),
-                patch.object(setup_compute, "AzureCliCredential") as credential,
-                patch.object(setup_compute, "MLClient", return_value=client) as factory,
-                contextlib.redirect_stdout(output),
-            ):
-                setup_compute.main()
-                credential.assert_called_once_with(tenant_id="tenant")
-                factory.assert_called_once_with(
-                    credential.return_value, "sub", "rg", "ws"
-                )
-                client.compute.begin_create_or_update.assert_called_once()
-                compute = client.compute.begin_create_or_update.call_args.args[0]
-                self.assertEqual(compute.name, "pdf-parsers-a100")
-                self.assertEqual(compute.size, "Standard_NC24ads_A100_v4")
-                self.assertEqual((compute.min_instances, compute.max_instances), (0, 1))
-                self.assertEqual(compute.identity.type, "system_assigned")
-                poller = client.compute.begin_create_or_update.return_value
-                poller.result.assert_called_once_with()
-
-                output.seek(0)
-                output.truncate()
-                poller.result.side_effect = HttpResponseError(
-                    "Compute provisioning failed"
-                )
-                with self.assertRaises(HttpResponseError):
-                    setup_compute.main()
-                self.assertNotIn("Compute configured:", output.getvalue())
+@pytest.mark.parametrize(
+    "module", [deploy_parsers, setup_compute], ids=["deploy-parsers", "setup-compute"]
+)
+def test_preview_does_not_authenticate_or_connect_even_without_config(
+    module, monkeypatch
+):
+    credential, client = MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        sys, "argv", [module.__name__, "--config", "/missing/config.json"]
+    )
+    monkeypatch.setattr(module, "AzureCliCredential", credential)
+    monkeypatch.setattr(module, "MLClient", client)
+    module.main()
+    credential.assert_not_called()
+    client.assert_not_called()
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(None, id="succeeded"),
+        pytest.param(HttpResponseError("Compute provisioning failed"), id="failed"),
+    ],
+)
+def test_compute_targets_configured_workspace_and_waits_for_completion(
+    tmp_path, monkeypatch, capsys, error
+):
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "tenant_id": "tenant",
+                "subscription_id": "sub",
+                "resource_group": "rg",
+                "workspace": "ws",
+            }
+        )
+    )
+    client, credential = MagicMock(), MagicMock()
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr(
+        sys, "argv", ["setup_compute", "--apply", "--config", str(config)]
+    )
+    monkeypatch.setattr(setup_compute, "AzureCliCredential", credential)
+    monkeypatch.setattr(setup_compute, "MLClient", factory)
+    poller = client.compute.begin_create_or_update.return_value
+    poller.result.side_effect = error
+
+    with (
+        pytest.raises(HttpResponseError, match="Compute provisioning failed")
+        if error
+        else nullcontext()
+    ):
+        setup_compute.main()
+
+    credential.assert_called_once_with(tenant_id="tenant")
+    factory.assert_called_once_with(credential.return_value, "sub", "rg", "ws")
+    client.compute.begin_create_or_update.assert_called_once()
+    compute = client.compute.begin_create_or_update.call_args.args[0]
+    assert compute.name == "pdf-parsers-a100"
+    assert compute.size == "Standard_NC24ads_A100_v4"
+    assert (compute.min_instances, compute.max_instances) == (0, 2)
+    assert compute.identity.type == "system_assigned"
+    poller.result.assert_called_once_with()
+    assert ("Compute configured:" in capsys.readouterr().out) is (error is None)

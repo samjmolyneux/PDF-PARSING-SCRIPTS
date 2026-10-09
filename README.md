@@ -1,5 +1,7 @@
 # PDF parsing on Azure ML
 
+[![Tests](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/tests.yml)
+[![Coverage](https://raw.githubusercontent.com/samjmolyneux/PDF-PARSING-SCRIPTS/badges/coverage.svg)](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/tests.yml)
 [![Pre-commit](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/pre-commit.yml/badge.svg?branch=main)](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/pre-commit.yml?query=branch%3Amain)
 [![Docs](https://github.com/samjmolyneux/PDF-PARSING-SCRIPTS/actions/workflows/docs.yml/badge.svg?branch=main)](https://samjmolyneux.github.io/PDF-PARSING-SCRIPTS/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](pyproject.toml)

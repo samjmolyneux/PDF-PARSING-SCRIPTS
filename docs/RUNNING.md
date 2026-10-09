@@ -182,14 +182,14 @@ may still have partial or complete exports.
 | Command not found                      | Activate the environment where you installed the package.                                                                                  |
 | Cannot find `config.json`              | Run from the repository directory or supply `--config`.                                                                                    |
 | No PDFs found                          | Check the folder path. The client does not search subfolders.                                                                              |
-| Parser endpoint is busy                | Another job is unfinished. Try later; use `--resume` for your own existing job.                                                            |
+| Parser endpoint is busy                | Two jobs are unfinished. Try later; use `--resume` for your own existing job.                                                              |
 | Access denied / 403                    | Check the account and tenant, then ask the workspace administrator to check access.                                                        |
 | Upload or submission was interrupted   | Keep the receipt and try `--resume`. If Azure cannot find the job, check its recorded name in Studio before resubmitting.                  |
 | Job failed or no report was downloaded | Open the job in Azure ML Studio and inspect its logs, including the `parse` child job. Early setup failures may produce no parser outputs. |
 
-The busy check covers both parsers and all users of the endpoint. It is a
-best-effort check: simultaneous submissions can still queue in Azure. This
-project does not automatically delete uploaded PDFs or cloud results.
+The busy check allows two unfinished jobs across both parsers and all users of
+the endpoint. It is a best-effort check: simultaneous submissions can still queue
+in Azure. This project does not automatically delete uploaded PDFs or cloud results.
 
 For the complete command options:
 

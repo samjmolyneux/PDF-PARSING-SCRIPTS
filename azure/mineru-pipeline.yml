@@ -1,6 +1,6 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponent.schema.json
 name: pdf_mineru_pipeline
-version: "5"
+version: "11"
 type: pipeline
 inputs:
   pdfs:

@@ -1,40 +1,32 @@
 """Verify streaming document exports without importing Paddle or running a GPU."""
 
-from pathlib import Path
-import tempfile
+import sys
 from types import SimpleNamespace
-import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+
+import pytest
 
 from workers.paddle_batch import parse_pdfs
 
 
-class PaddleBatchTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+class TestPaddleBatch:
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path, monkeypatch):
+        self.root = tmp_path
         self.pdfs = [self.root / "a.pdf", self.root / "b.pdf"]
         self.output = self.root / "exports"
         self.pipeline = MagicMock()
         self.factory = MagicMock(return_value=self.pipeline)
-        modules = patch.dict(
-            "sys.modules", {"paddleocr": SimpleNamespace(PaddleOCRVL=self.factory)}
+        monkeypatch.setitem(
+            sys.modules, "paddleocr", SimpleNamespace(PaddleOCRVL=self.factory)
         )
-        modules.start()
-        self.addCleanup(modules.stop)
-        environment = patch.dict(
-            "os.environ", {"PADDLE_PDX_CACHE_HOME": str(self.root)}
-        )
-        environment.start()
-        self.addCleanup(environment.stop)
+        monkeypatch.setenv("PADDLE_PDX_CACHE_HOME", str(self.root))
 
         def restructure(*, res_list, **kwargs):
-            self.assertEqual(
-                kwargs,
-                dict(merge_tables=True, relevel_titles=True, concatenate_pages=True),
+            assert kwargs == dict(
+                merge_tables=True, relevel_titles=True, concatenate_pages=True
             )
-            self.assertEqual(len({p["input_path"] for p in res_list}), 1)
+            assert len({p["input_path"] for p in res_list}) == 1
             content = ",".join(str(page["page_index"]) for page in res_list)
             result = MagicMock()
             for method, suffix in (
@@ -61,22 +53,22 @@ class PaddleBatchTests(unittest.TestCase):
         self,
     ):
         def pages(*, input):
-            self.assertEqual(input, [str(p) for p in self.pdfs])
+            assert input == [str(p) for p in self.pdfs]
             yield self.page(0, 0, 2)
-            self.assertFalse((self.output / "a").exists())
+            assert not (self.output / "a").exists()
             yield self.page(0, 1, 2)
             # First document must be saved before requesting later pages.
-            self.assertEqual((self.output / "a/result.md").read_text(), "0,1")
+            assert (self.output / "a/result.md").read_text() == "0,1"
             yield self.page(1)
 
         self.pipeline.predict_iter.side_effect = pages
-        self.assertEqual(list(parse_pdfs(self.pdfs, self.output)), self.pdfs)
+        assert list(parse_pdfs(self.pdfs, self.output)) == self.pdfs
         self.factory.assert_called_once()
         self.pipeline.predict_iter.assert_called_once()
         self.pipeline.predict.assert_not_called()
-        self.assertEqual(self.pipeline.restructure_pages.call_count, 2)
-        self.assertEqual((self.output / "b/result.docx").read_text(), "0")
-        self.assertTrue((self.output / "a/image.png").is_file())
+        assert self.pipeline.restructure_pages.call_count == 2
+        assert (self.output / "b/result.docx").read_text() == "0"
+        assert (self.output / "a/image.png").is_file()
 
     def test_native_exception_retains_prior_exports_and_is_not_retried(self):
         def pages(**kwargs):
@@ -85,32 +77,42 @@ class PaddleBatchTests(unittest.TestCase):
 
         self.pipeline.predict_iter.side_effect = pages
         results = parse_pdfs(self.pdfs, self.output)
-        self.assertEqual(next(results), self.pdfs[0])
-        with self.assertRaisesRegex(RuntimeError, "native VLM error"):
+        assert next(results) == self.pdfs[0]
+        with pytest.raises(RuntimeError, match="native VLM error"):
             next(results)
         self.pipeline.predict_iter.assert_called_once()
-        self.assertTrue((self.output / "a/result.docx").is_file())
-        self.assertFalse((self.output / "b").exists())
+        assert (self.output / "a/result.docx").is_file()
+        assert not (self.output / "b").exists()
 
-    def test_missing_pages_cannot_be_exported_as_a_complete_document(self):
-        for pages in (
-            [self.page(0, 0, 2)],
-            [self.page(0, 0, 3), self.page(0, 2, 3)],
-            [self.page(0, 0, 2), self.page(1)],
-        ):
-            with self.subTest(pages=pages):
-                self.pipeline.predict_iter.return_value = iter(pages)
-                with self.assertRaisesRegex(RuntimeError, "Incomplete"):
-                    list(parse_pdfs(self.pdfs, self.output))
+    @pytest.mark.parametrize(
+        "page_specs",
+        [
+            pytest.param([(0, 0, 2)], id="missing-last-page"),
+            pytest.param([(0, 0, 3), (0, 2, 3)], id="gap-in-pages"),
+            pytest.param([(0, 0, 2), (1, 0, 1)], id="document-changed"),
+        ],
+    )
+    def test_missing_pages_cannot_be_exported_as_a_complete_document(self, page_specs):
+        self.pipeline.predict_iter.return_value = iter(
+            self.page(*spec) for spec in page_specs
+        )
+        with pytest.raises(RuntimeError, match="Incomplete"):
+            list(parse_pdfs(self.pdfs, self.output))
         self.pipeline.restructure_pages.assert_not_called()
 
-    def test_missing_exports_do_not_yield_a_successful_document(self):
+    @pytest.mark.parametrize(
+        "method, suffix", [("json", ".json"), ("markdown", ".md"), ("word", ".docx")]
+    )
+    def test_missing_exports_do_not_yield_a_successful_document(self, method, suffix):
         self.pipeline.predict_iter.return_value = iter([self.page(0)])
+        result = self.pipeline.restructure_pages(
+            res_list=[self.page(0)],
+            merge_tables=True,
+            relevel_titles=True,
+            concatenate_pages=True,
+        )[0]
+        getattr(result, f"save_to_{method}").side_effect = None
         self.pipeline.restructure_pages.side_effect = None
-        self.pipeline.restructure_pages.return_value = [MagicMock()]
-        with self.assertRaisesRegex(RuntimeError, "Missing .json export"):
+        self.pipeline.restructure_pages.return_value = [result]
+        with pytest.raises(RuntimeError, match=f"Missing {suffix} export"):
             list(parse_pdfs(self.pdfs, self.output))
-
-
-if __name__ == "__main__":
-    unittest.main()

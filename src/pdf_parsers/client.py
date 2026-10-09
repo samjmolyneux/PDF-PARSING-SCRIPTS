@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 TERMINAL = {"Completed", "Failed", "Canceled", "Cancelled", "NotResponding"}
 DEPLOYMENT_NAMES = {"mineru": "mineru", "paddle": "paddle-vl"}
+# Match azure/compute.yml: each parser job uses one node.
+MAX_ACTIVE_JOBS = 2
 
 
 def save_json(path: Path, value: dict[str, Any]) -> None:
@@ -197,13 +199,17 @@ def main(parser_name: str, argv: Sequence[str] | None = None) -> int:
         if receipt is None:
             # Check both parser deployments before upload. This is not a reservation:
             # simultaneous submissions can still pass before either job is visible.
+            active_jobs = 0
             for existing in ml.batch_endpoints.list_jobs(
                 endpoint_name=config["endpoint"]
             ):
-                if existing.status not in TERMINAL:
+                if existing.status in TERMINAL:
+                    continue
+                active_jobs += 1
+                if active_jobs >= MAX_ACTIVE_JOBS:
                     msg = (
-                        f"Parser endpoint is busy: job {existing.name} "
-                        f"is {existing.status}. "
+                        f"Parser endpoint is busy: {MAX_ACTIVE_JOBS} jobs are "
+                        f"unfinished, including {existing.name} ({existing.status}). "
                         "No PDFs were uploaded. Please try again later."
                     )
                     raise RuntimeError(msg)

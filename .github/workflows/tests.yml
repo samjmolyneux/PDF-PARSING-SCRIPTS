@@ -1,0 +1,74 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install package and test dependencies
+        run: uv sync --group test --no-editable
+
+      - name: Run offline tests and measure coverage
+        run: uv run --no-sync python -m pytest --cov-report=term-missing --cov-report=json
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.json
+
+      - name: Generate coverage badge
+        id: coverage-badge
+        if: >-
+          github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+          github.event_name != 'pull_request' &&
+          matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        shell: bash
+        run: |
+          mkdir -p badge-output
+          coverage=$(node -p "require('./coverage.json').totals.percent_covered_display")
+          color=$(node -p "$coverage >= 95 ? 'green' : 'orange'")
+          npx --yes badgen-cli@0.2.0 \
+            -j coverage -s "$coverage%" -c "$color" \
+            > badge-output/coverage.svg
+
+      - name: Publish coverage badge
+        if: steps.coverage-badge.outcome == 'success'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: badges
+          folder: badge-output
+          force: false
+          commit-message: Update coverage badge

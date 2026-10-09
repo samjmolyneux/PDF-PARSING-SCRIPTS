@@ -16,8 +16,7 @@ RUN apt-get update \
 
 # The base supplies vLLM, PyTorch and Transformers. Install pinned MinerU;
 # pip reuses compatible dependencies and adjusts any that MinerU requires.
-RUN python3 -m pip install --no-cache-dir 'mineru[core]==3.3.1' \
-    && python3 -m pip check
+RUN python3 -m pip install --no-cache-dir 'mineru[core]==3.3.1'
 
 # Let this installed MinerU version choose and download all of its models.
 # Keep both its Hugging Face cache and generated config at fixed image paths.

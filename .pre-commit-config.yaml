@@ -3,7 +3,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-added-large-files
-        exclude: ^Data/pdf-test/
+        exclude: ^(Data/pdf-test/|tests/data/pdfs/(Young_2008|Vander_2016)\.pdf$)
       - id: check-case-conflict
       - id: check-illegal-windows-names
       - id: check-symlinks

@@ -15,3 +15,12 @@ models/*/
 .DS_Store
 *.[pP][dD][fF]
 /local todo.md
+.tox/
+.pytest_cache/
+.coverage*
+coverage.json
+coverage.xml
+htmlcov/
+badge-output/
+!tests/data/pdfs/Young_2008.pdf
+!tests/data/pdfs/Vander_2016.pdf

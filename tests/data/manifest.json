@@ -1,0 +1,48 @@
+{
+  "source": "https://github.com/EPPI-Centre/Flowde/tree/c92a183465f10090a2a9b9e1b5b2e381998c9123/data/consort-demo",
+  "modifications": "None; PDF files copied unchanged.",
+  "papers": [
+    {
+      "filename": "Vander_2016.pdf",
+      "title": "An individually-tailored smoking cessation intervention for rural Veterans: a pilot randomized trial",
+      "authors": [
+        "Mark W. Vander Weg",
+        "Ashley J. Cozad",
+        "M. Bryant Howren",
+        "Margaret Cretzmeyer",
+        "Melody Scherubel",
+        "Carolyn Turvey",
+        "Kathleen M. Grant",
+        "Thad E. Abrams",
+        "David A. Katz"
+      ],
+      "publication_year": 2016,
+      "doi_url": "https://doi.org/10.1186/s12889-016-3493-z",
+      "licences": ["CC-BY-4.0"],
+      "licence_urls": ["https://creativecommons.org/licenses/by/4.0/"],
+      "pdf_pages": 11,
+      "licence_notice_pages": [1],
+      "sha256": "93bd67acd0e79b41cb0158acb5e66439549b4b697f9855dadf135e4ab9787dc9",
+      "bytes": 597689
+    },
+    {
+      "filename": "Young_2008.pdf",
+      "title": "Acceptability and effectiveness of opportunistic referral of smokers to telephone cessation advice from a nurse: a randomised trial in Australian general practice",
+      "authors": [
+        "Jane Young",
+        "Seham Girgis",
+        "Tracey Bruce",
+        "Melissa Hobbs",
+        "Jeanette Ward"
+      ],
+      "publication_year": 2008,
+      "doi_url": "https://doi.org/10.1186/1471-2296-9-16",
+      "licences": ["CC-BY-2.0"],
+      "licence_urls": ["https://creativecommons.org/licenses/by/2.0/"],
+      "pdf_pages": 10,
+      "licence_notice_pages": [1],
+      "sha256": "dded1d27db0e642fdc5604df1ad3cacc2443fea4e79b8afd72397154bd0372c0",
+      "bytes": 300534
+    }
+  ]
+}

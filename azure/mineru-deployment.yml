@@ -2,7 +2,7 @@ $schema: https://azuremlschemas.azureedge.net/latest/pipelineComponentBatchDeplo
 name: mineru
 endpoint_name: eppi-pdf-parsers-ccaesjm
 type: pipeline
-component: azureml:pdf_mineru_pipeline:5
+component: azureml:pdf_mineru_pipeline:11
 settings:
   default_compute: pdf-parsers-a100
   continue_on_step_failure: false

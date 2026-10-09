@@ -7,7 +7,11 @@ docs = [
     "mkdocs>=1.6,<2"
 ]
 test = [
+    "coverage>=7.10,<8",
     "pre-commit>=4,<5",
+    "pytest>=8.4,<9",
+    "pytest-cov>=7,<8",
+    "pytest-socket>=0.7,<1",
     "ruff==0.14.1",
     "toml-sort==0.24.2",
     "yamllint==1.29.0"
@@ -27,6 +31,36 @@ version = "0.1.0"
 [project.scripts]
 run-mineru = "pdf_parsers.mineru:main"
 run-paddle = "pdf_parsers.paddle:main"
+
+[tool.coverage.report]
+fail_under = 90
+include_namespace_packages = true
+precision = 2
+show_missing = true
+
+[tool.coverage.run]
+branch = true
+patch = ["subprocess"]
+relative_files = true
+source = ["admin", "pdf_parsers", "workers"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--cov",
+    "--cov-report=term-missing",
+    "--import-mode=importlib",
+    "--strict",
+    "-m",
+    "not integration"
+]
+# Azure ML emits schema deprecations through Marshmallow; retain our own warnings.
+filterwarnings = [
+    'ignore::DeprecationWarning:^(azure\.ai\.ml|marshmallow)(\.|$)'
+]
+markers = ["integration: tests that submit real Azure jobs and require workspace access"]
+pythonpath = ["."]
+testpaths = ["tests"]
+verbosity_test_cases = "2"
 
 [tool.ruff]
 show-fixes = true
@@ -102,3 +136,15 @@ spaces_indent_inline_array = 4
 overrides."dependency-groups.docs".inline_arrays = false
 overrides."dependency-groups.test".inline_arrays = false
 overrides."project.dependencies".inline_arrays = false
+overrides."tool.pytest.ini_options.addopts".inline_arrays = false
+overrides."tool.pytest.ini_options.filterwarnings".inline_arrays = false
+overrides."tool.tox.*.commands".inline_arrays = false
+
+[tool.tox]
+env_list = ["py310", "py311", "py312"]
+requires = ["tox>=4.22"]
+
+[tool.tox.env_run_base]
+commands = [["python", "-m", "pytest", {default = ["tests"], extend = true, replace = "posargs"}]]
+dependency_groups = ["test"]
+package = "wheel"
