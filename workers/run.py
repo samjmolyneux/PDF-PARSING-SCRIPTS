@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 if __package__:
-    from .paddle_batch import parse_pdfs
+    from .paddle_batch import parse_pdfs as parse_paddle_pdfs
 else:
-    from paddle_batch import parse_pdfs
+    from paddle_batch import parse_pdfs as parse_paddle_pdfs
 
 
 def write_report(output: Path, report: dict[str, Any]) -> None:
@@ -29,7 +29,7 @@ def write_report(output: Path, report: dict[str, Any]) -> None:
     temporary.replace(output / "report.json")
 
 
-def stop_process(process: subprocess.Popen[bytes] | None) -> None:
+def stop_paddle_server(process: subprocess.Popen[bytes] | None) -> None:
     if process is None:
         return
     # The Paddle server can leave vLLM children after its parent exits.
@@ -44,7 +44,7 @@ def stop_process(process: subprocess.Popen[bytes] | None) -> None:
     process.wait()
 
 
-def server_command() -> tuple[list[str], str]:
+def paddle_server_command() -> tuple[list[str], str]:
     python, cli = os.environ["PADDLE_SERVER_PYTHON"], os.environ["PADDLE_SERVER_CLI"]
     for file in (python, cli):
         if not Path(file).is_file():
@@ -75,8 +75,10 @@ def server_command() -> tuple[list[str], str]:
     ], "http://127.0.0.1:8118/health"
 
 
-def start_server(log: BinaryIO, timeout: float = 1200) -> subprocess.Popen[bytes]:
-    command, health = server_command()
+def start_paddle_server(
+    log: BinaryIO, timeout: float = 1200
+) -> subprocess.Popen[bytes]:
+    command, health = paddle_server_command()
     # Fixed launcher and image-configured executables; arguments stay separate.
     process = subprocess.Popen(  # noqa: S603
         command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
@@ -88,7 +90,7 @@ def start_server(log: BinaryIO, timeout: float = 1200) -> subprocess.Popen[bytes
                 msg = f"Model server exited ({process.returncode}); see server.log"
                 raise RuntimeError(msg)
             try:
-                # server_command supplies a fixed loopback HTTP health URL.
+                # paddle_server_command supplies a fixed loopback HTTP health URL.
                 with urllib.request.urlopen(health, timeout=5) as response:  # noqa: S310
                     if response.status == HTTPStatus.OK:
                         return process
@@ -98,7 +100,7 @@ def start_server(log: BinaryIO, timeout: float = 1200) -> subprocess.Popen[bytes
         msg = "Model server did not become ready; see server.log"
         raise TimeoutError(msg)
     except BaseException:
-        stop_process(process)
+        stop_paddle_server(process)
         raise
 
 
@@ -122,7 +124,7 @@ def process_batch(parser: str, input_dir: Path, output: Path) -> int:
             for p in pdfs
         ],
     }
-    server = None
+    paddle_server = None
     write_report(output, report)
     with (output / "parser.log").open("w", encoding="utf-8", buffering=1) as log:
         try:
@@ -189,12 +191,12 @@ def process_batch(parser: str, input_dir: Path, output: Path) -> int:
             else:
                 documents = {item["input"]: item for item in report["documents"]}
                 with (output / "server.log").open("ab", buffering=0) as server_log:
-                    server = start_server(server_log)
+                    paddle_server = start_paddle_server(server_log)
                     with (
                         contextlib.redirect_stdout(log),
                         contextlib.redirect_stderr(log),
                     ):
-                        for pdf in parse_pdfs(pdfs, exports):
+                        for pdf in parse_paddle_pdfs(pdfs, exports):
                             documents[pdf.name]["status"] = "succeeded"
                             write_report(output, report)
             report["finished"] = True
@@ -207,7 +209,7 @@ def process_batch(parser: str, input_dir: Path, output: Path) -> int:
             traceback.print_exc(file=log)
             print(report["fatal_error"], flush=True)
         finally:
-            stop_process(server)
+            stop_paddle_server(paddle_server)
             write_report(output, report)
     failures = sum(item["status"] != "succeeded" for item in report["documents"])
     print(

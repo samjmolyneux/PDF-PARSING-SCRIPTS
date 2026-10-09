@@ -60,7 +60,7 @@ class TestWorkflow:
                 raise subprocess.CalledProcessError(exit_code, command)
 
         with (
-            patch.object(worker, "start_server") as start,
+            patch.object(worker, "start_paddle_server") as start,
             patch.object(worker.subprocess, "run", side_effect=export) as run,
             contextlib.redirect_stdout(io.StringIO()),
         ):
@@ -96,9 +96,9 @@ class TestWorkflow:
             raise RuntimeError("native pipeline failed")
 
         with (
-            patch.object(worker, "start_server", return_value=object()) as start,
-            patch.object(worker, "stop_process") as stop,
-            patch.object(worker, "parse_pdfs", side_effect=parse) as parse_call,
+            patch.object(worker, "start_paddle_server", return_value=object()) as start,
+            patch.object(worker, "stop_paddle_server") as stop,
+            patch.object(worker, "parse_paddle_pdfs", side_effect=parse) as parse_call,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             code = worker.process_batch("paddle", self.inputs, self.output)
@@ -115,9 +115,9 @@ class TestWorkflow:
     def test_paddle_returning_no_results_cannot_report_success(self):
         self.pdf("a.pdf")
         with (
-            patch.object(worker, "start_server", return_value=object()),
-            patch.object(worker, "stop_process"),
-            patch.object(worker, "parse_pdfs", return_value=iter([])),
+            patch.object(worker, "start_paddle_server", return_value=object()),
+            patch.object(worker, "stop_paddle_server"),
+            patch.object(worker, "parse_paddle_pdfs", return_value=iter([])),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             assert worker.process_batch("paddle", self.inputs, self.output) == 1
@@ -128,7 +128,7 @@ class TestWorkflow:
         self.pdf("b.pdf")
         with (
             patch.object(
-                worker, "start_server", side_effect=RuntimeError("missing model")
+                worker, "start_paddle_server", side_effect=RuntimeError("missing model")
             ) as start,
             contextlib.redirect_stdout(io.StringIO()),
         ):
@@ -142,7 +142,7 @@ class TestWorkflow:
     @pytest.mark.parametrize("parser", ["mineru", "paddle"])
     def test_empty_batch_is_failure(self, parser):
         with (
-            patch.object(worker, "start_server") as start,
+            patch.object(worker, "start_paddle_server") as start,
             patch.object(worker.subprocess, "run") as run,
             contextlib.redirect_stdout(io.StringIO()),
         ):
@@ -152,7 +152,8 @@ class TestWorkflow:
         assert "No PDFs" in self.report()["fatal_error"]
 
     @pytest.mark.parametrize(
-        "parser, operation", [("mineru", "subprocess.run"), ("paddle", "start_server")]
+        "parser, operation",
+        [("mineru", "subprocess.run"), ("paddle", "start_paddle_server")],
     )
     def test_worker_preserves_model_locations_from_the_image(self, parser, operation):
         self.pdf("a.pdf")
@@ -180,7 +181,7 @@ class TestWorkflow:
         with (
             patch.dict(os.environ, variables),
             patch(f"workers.run.{operation}", side_effect=record_environment) as launch,
-            patch.object(worker, "parse_pdfs", return_value=iter([])),
+            patch.object(worker, "parse_paddle_pdfs", return_value=iter([])),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             worker.process_batch(parser, self.inputs, self.output)
@@ -205,7 +206,7 @@ class TestWorkflow:
             patch.object(worker.urllib.request, "urlopen") as health,
         ):
             health.return_value.__enter__.return_value.status = 200
-            assert worker.start_server(log) is process
+            assert worker.start_paddle_server(log) is process
         command = launch.call_args.args[0]
         assert command[0] == "bash"
         assert Path(command[1]) == Path(worker.__file__).with_name(
@@ -227,15 +228,15 @@ class TestWorkflow:
         with (
             patch.object(
                 worker,
-                "server_command",
+                "paddle_server_command",
                 return_value=(["bash", "launcher.sh"], "health"),
             ),
             patch.object(worker.subprocess, "Popen", return_value=process),
-            patch.object(worker, "stop_process") as stop,
+            patch.object(worker, "stop_paddle_server") as stop,
             patch.object(worker.urllib.request, "urlopen") as health,
         ):
             with pytest.raises(RuntimeError, match="exited \\(17\\).*server.log"):
-                worker.start_server(io.BytesIO())
+                worker.start_paddle_server(io.BytesIO())
         health.assert_not_called()
         stop.assert_called_once_with(process)
 
@@ -271,7 +272,7 @@ class TestWorkflow:
                 return
             with (
                 patch.object(worker.subprocess, "run") as run,
-                patch.object(worker, "start_server") as start,
+                patch.object(worker, "start_paddle_server") as start,
                 contextlib.redirect_stdout(io.StringIO()),
             ):
                 code = worker.process_batch(target, self.inputs, self.output)

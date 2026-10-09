@@ -50,8 +50,8 @@ def test_pinned_model_download_matches_consumer_path(repository, consumer):
             if line.startswith("RUN /opt/client/bin/hf download ")
         ]
         downloads = {args[2]: args for args in commands}
-        command, _ = worker.server_command()
-        list(worker.parse_pdfs([], Path(cache) / "output"))
+        command, _ = worker.paddle_server_command()
+        list(worker.parse_paddle_pdfs([], Path(cache) / "output"))
 
     paths = {
         "server": Path(command[command.index("--model_dir") + 1]),
