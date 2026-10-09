@@ -12,8 +12,6 @@ import pytest
 
 from workers import run as worker
 
-ROOT = Path(__file__).resolve().parents[1]
-
 
 @pytest.mark.parametrize(
     "repository, consumer",
@@ -22,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
         ("PaddlePaddle/PaddleOCR-VL-1.6", "server"),
     ],
 )
-def test_pinned_model_download_matches_consumer_path(repository, consumer):
-    dockerfile = (ROOT / "environments/paddle/Dockerfile").read_text()
+def test_pinned_model_download_matches_consumer_path(repo_root, repository, consumer):
+    dockerfile = (repo_root / "environments/paddle/Dockerfile").read_text()
     lines = dockerfile.replace("\\\n", " ").splitlines()
     cache = next(
         line.split("=", 1)[1]

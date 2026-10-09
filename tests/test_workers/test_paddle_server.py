@@ -1,13 +1,18 @@
-"""Exercise server readiness and shutdown without launching Paddle or a GPU."""
+"""Check Paddle server launch, readiness and shutdown without a GPU."""
 
 import io
+import os
 import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from workers import run as worker
+
+pytestmark = pytest.mark.usefixtures("worker_environment")
 
 
 @pytest.fixture
@@ -99,3 +104,53 @@ def test_shutdown_handles_an_already_gone_process(monkeypatch):
     process = MagicMock(pid=1234)
     worker.stop_paddle_server(process)
     process.wait.assert_not_called()
+
+
+def test_paddle_server_launch_preserves_logs_and_process_group_until_ready(tmp_path):
+    cli = tmp_path / "server cli.py"
+    cli.touch()
+    os.environ.update(
+        PADDLE_SERVER_PYTHON=sys.executable,
+        PADDLE_SERVER_CLI=str(cli),
+        PADDLE_PDX_CACHE_HOME=str((tmp_path / "models")),
+    )
+    process = MagicMock()
+    process.poll.return_value = None
+    log = io.BytesIO()
+    with (
+        patch.object(worker.subprocess, "Popen", return_value=process) as launch,
+        patch.object(worker.urllib.request, "urlopen") as health,
+    ):
+        health.return_value.__enter__.return_value.status = 200
+        assert worker.start_paddle_server(log) is process
+    command = launch.call_args.args[0]
+    assert command[0] == "bash"
+    assert Path(command[1]) == Path(worker.__file__).with_name("start_paddle_server.sh")
+    assert Path(command[1]).is_file()
+    assert command[2:5] == [sys.executable, str(cli), "genai_server"]
+    # Inherit Conda's activation state so the shell can undo it correctly.
+    assert "env" not in launch.call_args.kwargs
+    assert launch.call_args.kwargs["stdout"] is log
+    assert launch.call_args.kwargs["stderr"] == subprocess.STDOUT
+    assert launch.call_args.kwargs["start_new_session"]
+    health.assert_called_once_with("http://127.0.0.1:8118/health", timeout=5)
+
+
+def test_server_launcher_failure_stops_immediately_and_cleans_up():
+    process = MagicMock()
+    process.poll.return_value = 17
+    process.returncode = 17
+    with (
+        patch.object(
+            worker,
+            "paddle_server_command",
+            return_value=(["bash", "launcher.sh"], "health"),
+        ),
+        patch.object(worker.subprocess, "Popen", return_value=process),
+        patch.object(worker, "stop_paddle_server") as stop,
+        patch.object(worker.urllib.request, "urlopen") as health,
+    ):
+        with pytest.raises(RuntimeError, match="exited \\(17\\).*server.log"):
+            worker.start_paddle_server(io.BytesIO())
+    health.assert_not_called()
+    stop.assert_called_once_with(process)

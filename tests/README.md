@@ -8,6 +8,29 @@ python -m pip install --upgrade pip
 python -m pip install . --group test
 ```
 
+## Where tests live
+
+The offline test directories mirror the code and configuration they exercise:
+
+| Directory            | What it tests                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `test_src/`          | The local client, installed Paddle/MinerU commands, PDF discovery and result reports. |
+| `test_admin/`        | Compute setup, parser deployment, previews and the admin CLIs.                        |
+| `test_workers/`      | Batch execution, Paddle exports, the Paddle server and the worker CLI.                |
+| `test_azure/`        | Azure YAML definitions and consistency between asset references.                      |
+| `test_environments/` | Environment build contexts and Paddle model download paths.                           |
+| `test_shared/`       | Checks comparing client and worker behavior for the same inputs.                      |
+| `integration/`       | Real Azure runs, selected explicitly.                                                 |
+| `data/`              | Licensed PDF fixtures and their provenance.                                           |
+
+Within `test_workers/`, `test_run.py` covers behavior shared by both parsers;
+`test_mineru_run.py` and `test_paddle_run.py` cover their specific batch behavior.
+`test_paddle_server.py` covers server launch, readiness and shutdown.
+
+`conftest.py` contains the shared fixtures: repository paths, CLI execution,
+temporary PDF folders, reading worker reports and restoring environment variables.
+Mocks specific to a test file stay in that file.
+
 ## Offline tests
 
 ```bash
@@ -107,3 +130,7 @@ different inputs, statuses or expected results. Each case should run independent
 with fresh fixtures and a useful case name, rather than using loops or `subTest`
 to exercise multiple cases inside one test. Loops for constructing a batch or
 inspecting the files produced by one workflow are fine.
+
+Place new tests under the directory matching the code they exercise. Keep Paddle
+and MinerU cases parameterised together when they test the same workflow; use
+`test_shared/` when a test deliberately compares multiple parts of the project.

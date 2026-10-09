@@ -1,6 +1,4 @@
-"""Load definitions through Azure ML's schemas without contacting Azure."""
-
-from pathlib import Path
+"""Validate Azure compute, endpoints, components and their asset references offline."""
 
 import pytest
 from azure.ai.ml import (
@@ -15,45 +13,31 @@ from azure.ai.ml.entities._load_functions import (
 
 from pdf_parsers.client import DEPLOYMENT_NAMES, MAX_ACTIVE_JOBS
 
-ROOT = Path(__file__).resolve().parents[1]
 
-
-def test_compute_loads_with_scale_to_zero():
-    compute = load_compute(ROOT / "azure/compute.yml")
+def test_compute_loads_with_scale_to_zero(repo_root):
+    compute = load_compute(repo_root / "azure/compute.yml")
     assert (compute.min_instances, compute.max_instances) == (0, 2)
     assert MAX_ACTIVE_JOBS == compute.max_instances
 
 
-def test_endpoint_loads_with_aad_authentication():
-    assert load_batch_endpoint(ROOT / "azure/endpoint.yml").auth_mode == "aad_token"
-
-
-@pytest.mark.parametrize("parser", ["mineru", "paddle"])
-def test_environment_build_context_resolves(parser):
-    environment = load_environment(ROOT / f"environments/{parser}/environment.yml")
-    environment.validate()
-    # Azure resolves the upload folder relative to environment.yml.
-    context = Path(environment.path).resolve()
-    assert context == ROOT / f"environments/{parser}"
-    assert (context / environment.build.dockerfile_path).is_file()
-    if parser == "paddle":
-        assert (context / "conda.yml").is_file()
-    assert environment.image is None
-    assert environment.conda_file is None
+def test_endpoint_loads_with_aad_authentication(repo_root):
+    assert (
+        load_batch_endpoint(repo_root / "azure/endpoint.yml").auth_mode == "aad_token"
+    )
 
 
 @pytest.mark.parametrize("parser", ["mineru", "paddle"])
 @pytest.mark.parametrize("kind", ["command", "pipeline"])
-def test_component_validates(parser, kind):
-    component = load_component(ROOT / f"azure/{parser}-{kind}.yml")
+def test_component_validates(repo_root, parser, kind):
+    component = load_component(repo_root / f"azure/{parser}-{kind}.yml")
     assert component._validate().passed
     assert component.outputs["results"].mode == "rw_mount"
 
 
 @pytest.mark.parametrize("parser", ["mineru", "paddle"])
-def test_pipeline_deployment_validates(parser):
+def test_pipeline_deployment_validates(repo_root, parser):
     deployment = load_pipeline_component_batch_deployment(
-        ROOT / f"azure/{parser}-deployment.yml"
+        repo_root / f"azure/{parser}-deployment.yml"
     )
     assert deployment.type == "pipeline"
     assert deployment.settings["default_compute"] == "pdf-parsers-a100"
@@ -79,10 +63,10 @@ def test_pipeline_deployment_validates(parser):
         ),
     ],
 )
-def test_runtime_variables_survive_pipeline_serialization(parser, variables):
+def test_runtime_variables_survive_pipeline_serialization(repo_root, parser, variables):
     # Schema validation alone didn't catch variables being lost when they
     # were placed on the reusable component instead of the pipeline job.
-    pipeline = load_component(ROOT / f"azure/{parser}-pipeline.yml")
+    pipeline = load_component(repo_root / f"azure/{parser}-pipeline.yml")
     expected = {"PYTHONUNBUFFERED": "1", "HF_HUB_OFFLINE": "1", **variables}
     assert pipeline.jobs["parse"].environment_variables == expected
     registered = pipeline._to_rest_object().properties.component_spec
@@ -90,12 +74,12 @@ def test_runtime_variables_survive_pipeline_serialization(parser, variables):
 
 
 @pytest.mark.parametrize("parser", ["mineru", "paddle"])
-def test_version_references_agree_and_pdfs_are_the_only_job_input(parser):
-    environment = load_environment(ROOT / f"environments/{parser}/environment.yml")
-    command = load_component(ROOT / f"azure/{parser}-command.yml")
-    pipeline = load_component(ROOT / f"azure/{parser}-pipeline.yml")
+def test_version_references_agree_and_pdfs_are_the_only_job_input(repo_root, parser):
+    environment = load_environment(repo_root / f"environments/{parser}/environment.yml")
+    command = load_component(repo_root / f"azure/{parser}-command.yml")
+    pipeline = load_component(repo_root / f"azure/{parser}-pipeline.yml")
     deployment = load_pipeline_component_batch_deployment(
-        ROOT / f"azure/{parser}-deployment.yml"
+        repo_root / f"azure/{parser}-deployment.yml"
     )
     assert (
         command.environment.removeprefix("azureml:")
