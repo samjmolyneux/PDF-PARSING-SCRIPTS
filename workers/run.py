@@ -158,6 +158,9 @@ def process_batch(parser: str, input_dir: Path, output: Path) -> int:
                         "ocr",
                         "-b",
                         "hybrid-engine",
+                        # Initialize the VLM before the API accepts PDF submissions.
+                        "--enable-vlm-preload",
+                        "true",
                         "--effort",
                         "high",
                         "-l",

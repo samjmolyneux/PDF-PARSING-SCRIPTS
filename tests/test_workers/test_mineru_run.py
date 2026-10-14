@@ -53,6 +53,7 @@ def test_mineru_folder_batch_retains_exports_and_confirms_only_success(
     run.assert_called_once()
     command = run.call_args.args[0]
     assert command[command.index("-p") + 1] == str(pdf_folder.resolve())
+    assert command[command.index("--enable-vlm-preload") + 1] == "true"
     assert "--api-url" not in command
     assert "timeout" not in run.call_args.kwargs
     assert run.call_args.kwargs["check"]
