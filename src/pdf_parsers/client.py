@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -22,6 +22,7 @@ TERMINAL = {"Completed", "Failed", "Canceled", "Cancelled", "NotResponding"}
 DEPLOYMENT_NAMES = {"mineru": "mineru", "paddle": "paddle-vl"}
 # Match azure/compute.yml: each parser job uses one node.
 MAX_ACTIVE_JOBS = 2
+JOB_LOOKBACK_HOURS = 25
 
 
 def save_json(path: Path, value: dict[str, Any]) -> None:
@@ -99,6 +100,67 @@ def report_success(
     )
 
 
+def check_endpoint_available(ml: MLClient, endpoint: str, *, since: datetime) -> None:
+    """Check recent endpoint jobs, assuming Azure returns newest submissions first."""
+    from azure.ai.ml.constants import ListViewType  # noqa: PLC0415
+
+    print(
+        f"Checking parser endpoint availability (last {JOB_LOOKBACK_HOURS} hours; "
+        f"since {since:%Y-%m-%d %H:%M:%S} UTC)...",
+        flush=True,
+    )
+    active_jobs = recent_jobs = 0
+    previous_created = None
+    # The batch-endpoint API can repeat pages indefinitely. The workspace API
+    # filters to this endpoint and includes archived jobs from both deployments.
+    for existing in ml.jobs.list(
+        list_view_type=ListViewType.ALL,
+        properties=f"azureml.endpointname={endpoint}",
+    ):
+        if existing is None:
+            msg = (
+                "Cannot read an Azure job to check endpoint availability. "
+                "No PDFs were uploaded."
+            )
+            raise RuntimeError(msg)
+        created = getattr(
+            getattr(existing, "creation_context", None), "created_at", None
+        )
+        if not isinstance(created, datetime) or created.utcoffset() is None:
+            msg = (
+                f"Cannot read the submission time of Azure job {existing.name}. "
+                "No PDFs were uploaded."
+            )
+            raise RuntimeError(msg)
+        if previous_created is not None and created > previous_created:
+            msg = (
+                "Azure did not return jobs newest first; "
+                "cannot check the recent-job limit. No PDFs were uploaded."
+            )
+            raise RuntimeError(msg)
+        if created < since:
+            # Do not request more history after reaching the lookback boundary.
+            break
+        previous_created = created
+        recent_jobs += 1
+        if existing.status in TERMINAL:
+            continue
+        active_jobs += 1
+        if active_jobs >= MAX_ACTIVE_JOBS:
+            msg = (
+                f"Parser endpoint is busy: {MAX_ACTIVE_JOBS} jobs are unfinished "
+                f"within the last {JOB_LOOKBACK_HOURS} hours, including "
+                f"{existing.name} ({existing.status}). "
+                "No PDFs were uploaded. Please try again later."
+            )
+            raise RuntimeError(msg)
+    print(
+        f"Endpoint available: {active_jobs}/{MAX_ACTIVE_JOBS} unfinished jobs. "
+        f"Recent submissions checked: {recent_jobs}.",
+        flush=True,
+    )
+
+
 def main(parser_name: str, argv: Sequence[str] | None = None) -> int:
     """Run the client; explicit arguments also allow calls from notebooks."""
     working_dir = Path.cwd()
@@ -162,6 +224,7 @@ def main(parser_name: str, argv: Sequence[str] | None = None) -> int:
             config = json.loads(args.config.read_text(encoding="utf-8"))
             folder, files = pdf_files(args.input)
 
+        print("Connecting to Azure ML...", flush=True)
         # Lazy imports make --help and local tests independent of the Azure SDK.
         from azure.ai.ml import Input, MLClient  # noqa: PLC0415
         from azure.core.exceptions import ClientAuthenticationError  # noqa: PLC0415
@@ -199,20 +262,11 @@ def main(parser_name: str, argv: Sequence[str] | None = None) -> int:
         if receipt is None:
             # Check both parser deployments before upload. This is not a reservation:
             # simultaneous submissions can still pass before either job is visible.
-            active_jobs = 0
-            for existing in ml.batch_endpoints.list_jobs(
-                endpoint_name=config["endpoint"]
-            ):
-                if existing.status in TERMINAL:
-                    continue
-                active_jobs += 1
-                if active_jobs >= MAX_ACTIVE_JOBS:
-                    msg = (
-                        f"Parser endpoint is busy: {MAX_ACTIVE_JOBS} jobs are "
-                        f"unfinished, including {existing.name} ({existing.status}). "
-                        "No PDFs were uploaded. Please try again later."
-                    )
-                    raise RuntimeError(msg)
+            check_endpoint_available(
+                ml,
+                config["endpoint"],
+                since=datetime.now(timezone.utc) - timedelta(hours=JOB_LOOKBACK_HOURS),
+            )
             run_id = (
                 f"{parser_name}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}-"
                 f"{uuid.uuid4().hex[:10]}"

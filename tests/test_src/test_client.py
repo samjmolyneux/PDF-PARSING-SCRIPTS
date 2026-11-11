@@ -4,22 +4,38 @@ import contextlib
 import io
 import json
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 from azure.ai.ml import MLClient
+from azure.ai.ml.constants import ListViewType
 from azure.core.exceptions import ClientAuthenticationError, HttpResponseError
+from azure.core.paging import ItemPaged
 from azure.identity import CredentialUnavailableError
 
 from pdf_parsers import mineru, paddle
-from pdf_parsers.client import download_results
+from pdf_parsers.client import (
+    JOB_LOOKBACK_HOURS,
+    check_endpoint_available,
+    download_results,
+)
+
+
+def listed_job(name, status, created_at):
+    return SimpleNamespace(
+        name=name,
+        status=status,
+        creation_context=SimpleNamespace(created_at=created_at),
+    )
 
 
 class TestClient:
     @pytest.fixture(autouse=True)
     def setup(self, tmp_path, monkeypatch):
+        self.now = datetime.now(timezone.utc)
         self.root = tmp_path.resolve()
         monkeypatch.chdir(self.root)
         self.inputs = self.root / "input"
@@ -39,7 +55,9 @@ class TestClient:
         self.azure_cli = MagicMock()
         self.browser = MagicMock()
         self.device_code = MagicMock()
-        self.ml.batch_endpoints.list_jobs.return_value = []
+        self.ml.batch_endpoints.list_jobs.side_effect = AssertionError(
+            "The batch-endpoint job API can loop over the same page forever"
+        )
         self.outputs = {}
         self.ml.jobs.list.return_value = []
         self.events = []
@@ -164,7 +182,7 @@ class TestClient:
     def test_azure_access_errors_do_not_trigger_browser_fallback(
         self, login_args, error, expected_message
     ):
-        self.ml.batch_endpoints.list_jobs.side_effect = error
+        self.ml.jobs.list.side_effect = error
         code, message = self.call(self.inputs, "--no-wait", *login_args)
         assert code == 1
         assert expected_message in message
@@ -204,7 +222,7 @@ class TestClient:
             SimpleNamespace(status="Completed"),
         ]
         # Resuming must work even while the endpoint has an unfinished job.
-        self.ml.batch_endpoints.list_jobs.side_effect = AssertionError(
+        self.ml.jobs.list.side_effect = AssertionError(
             "Resume must skip the busy check"
         )
         destination = (
@@ -226,8 +244,9 @@ class TestClient:
         assert (destination / "report.json").is_file()
         assert (destination / "documents/a/result.md").read_bytes() == b"all exports"
         assert "1/1 PDFs succeeded" in message
-        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
-            endpoint_name="endpoint"
+        self.ml.jobs.list.assert_called_once_with(
+            list_view_type=ListViewType.ALL,
+            properties="azureml.endpointname=endpoint",
         )
         assert len(self.upload_directories) == 1
         assert not self.upload_directories[0].exists()
@@ -268,8 +287,9 @@ class TestClient:
         assert (destination / "documents/a/result.md").read_bytes() == b"all exports"
         assert json.loads(receipt_path.read_text()) == receipt
         self.ml.batch_endpoints.invoke.assert_called_once()
-        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
-            endpoint_name="endpoint"
+        self.ml.jobs.list.assert_called_once_with(
+            list_view_type=ListViewType.ALL,
+            properties="azureml.endpointname=endpoint",
         )
         self.ml.jobs.cancel.assert_not_called()
         assert len(self.upload_directories) == 1
@@ -328,7 +348,7 @@ class TestClient:
         code, message = self.call(self.inputs, "--no-wait")
         assert code == 1
         assert "No PDFs found" in message
-        self.ml.batch_endpoints.list_jobs.assert_not_called()
+        self.ml.jobs.list.assert_not_called()
         self.ml.batch_endpoints.invoke.assert_not_called()
         assert not (self.root / "runs").exists()
 
@@ -370,13 +390,15 @@ class TestClient:
     def test_endpoint_allows_a_second_job_but_blocks_a_third_before_upload(
         self, parser, other, status, active_jobs, expected_code
     ):
-        self.ml.batch_endpoints.list_jobs.return_value = [
-            SimpleNamespace(name="old-job", status="Completed"),
-            *[
-                SimpleNamespace(name=f"{other}-colleague-job-{index}", status=status)
-                for index in range(active_jobs)
-            ],
-        ]
+        self.ml.jobs.list.return_value = iter(
+            [
+                listed_job("finished-job", "Completed", self.now),
+                *[
+                    listed_job(f"{other}-colleague-job-{index}", status, self.now)
+                    for index in range(active_jobs)
+                ],
+            ]
+        )
         code, message = self.call(self.inputs, "--no-wait", parser=parser)
         assert code == expected_code, message
         if expected_code:
@@ -394,22 +416,46 @@ class TestClient:
     )
     def test_finished_jobs_do_not_block_submission(self, status):
         # Counting these finished jobs as active would hit the two-job limit.
-        self.ml.batch_endpoints.list_jobs.return_value = [
-            SimpleNamespace(name=f"old-{status}-{index}", status=status)
+        self.ml.jobs.list.return_value = [
+            listed_job(f"finished-{status}-{index}", status, self.now)
             for index in range(2)
         ]
         self.submit()
-        self.ml.batch_endpoints.list_jobs.assert_called_once_with(
-            endpoint_name="endpoint"
+        self.ml.jobs.list.assert_called_once_with(
+            list_view_type=ListViewType.ALL,
+            properties="azureml.endpointname=endpoint",
         )
 
     def test_job_listing_error_does_not_upload_or_submit(self):
-        self.ml.batch_endpoints.list_jobs.side_effect = RuntimeError(
-            "Cannot read endpoint jobs"
-        )
+        self.ml.jobs.list.side_effect = RuntimeError("Cannot read endpoint jobs")
         code, message = self.call(self.inputs, "--no-wait")
         assert code == 1
         assert "Cannot read endpoint jobs" in message
+        assert not (self.root / "runs").exists()
+        self.ml.batch_endpoints.invoke.assert_not_called()
+
+    def test_unreadable_job_does_not_upload_or_submit(self):
+        self.ml.jobs.list.return_value = [None]
+        code, message = self.call(self.inputs, "--no-wait")
+        assert code == 1
+        assert "Cannot read an Azure job" in message
+        assert "No PDFs were uploaded" in message
+        assert not (self.root / "runs").exists()
+        self.ml.batch_endpoints.invoke.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "created_at",
+        [None, "2026-11-11T12:00:00Z", datetime.fromisoformat("2026-11-11T12:00:00")],
+        ids=["missing", "unparsed", "missing-timezone"],
+    )
+    def test_unreadable_submission_time_does_not_upload_or_submit(self, created_at):
+        self.ml.jobs.list.return_value = [
+            listed_job("unknown-date", "Running", created_at)
+        ]
+        code, message = self.call(self.inputs, "--no-wait")
+        assert code == 1
+        assert "Cannot read the submission time" in message
+        assert "No PDFs were uploaded" in message
         assert not (self.root / "runs").exists()
         self.ml.batch_endpoints.invoke.assert_not_called()
 
@@ -557,3 +603,73 @@ class TestClient:
             destination = self.root / status
             assert download_results(ml, "job", destination) == {"finished": True}
             assert (destination / "export.md").read_text() == "export"
+
+
+@pytest.mark.parametrize(
+    ("seconds_from_cutoff", "timezone_hours", "blocked"),
+    [
+        pytest.param(1, 0, True, id="inside-window"),
+        pytest.param(0, 0, True, id="exactly-25-hours"),
+        pytest.param(-1, 0, False, id="older-than-25-hours"),
+        pytest.param(0, 5, True, id="cutoff-in-another-timezone"),
+    ],
+)
+def test_endpoint_lookback_boundary(
+    seconds_from_cutoff, timezone_hours, blocked, capsys
+):
+    assert JOB_LOOKBACK_HOURS == 25
+    now = datetime(2026, 11, 11, 12, tzinfo=timezone.utc)
+    since = now - timedelta(hours=25)
+    created_at = (since + timedelta(seconds=seconds_from_cutoff)).astimezone(
+        timezone(timedelta(hours=timezone_hours))
+    )
+    ml = MagicMock()
+    ml.jobs.list.return_value = [
+        listed_job("mineru-job", "Running", created_at),
+        listed_job("paddle-job", "Queued", created_at),
+    ]
+    if blocked:
+        with pytest.raises(RuntimeError, match="2 jobs are unfinished"):
+            check_endpoint_available(ml, "endpoint", since=since)
+    else:
+        check_endpoint_available(ml, "endpoint", since=since)
+        assert (
+            "0/2 unfinished jobs. Recent submissions checked: 0"
+            in capsys.readouterr().out
+        )
+
+
+def test_endpoint_lookback_stops_before_requesting_an_older_page(capsys):
+    since = datetime(2026, 11, 10, 11, tzinfo=timezone.utc)
+    get_page = MagicMock(
+        side_effect=[
+            {
+                "nextLink": "older-page",
+                "value": [
+                    listed_job("recent-job", "Running", since + timedelta(hours=1)),
+                    listed_job("old-job", "Running", since - timedelta(seconds=1)),
+                ],
+            },
+            AssertionError("Older history must not be fetched"),
+        ],
+    )
+    ml = MagicMock()
+    ml.jobs.list.return_value = ItemPaged(
+        get_page, lambda response: (response["nextLink"], iter(response["value"]))
+    )
+    check_endpoint_available(ml, "endpoint", since=since)
+    get_page.assert_called_once_with(None)
+    message = capsys.readouterr().out
+    assert "last 25 hours; since 2026-11-10 11:00:00 UTC" in message
+    assert "1/2 unfinished jobs. Recent submissions checked: 1" in message
+
+
+def test_endpoint_lookback_rejects_out_of_order_dates():
+    since = datetime(2026, 11, 10, 11, tzinfo=timezone.utc)
+    ml = MagicMock()
+    ml.jobs.list.return_value = [
+        listed_job("first-job", "Completed", since + timedelta(hours=1)),
+        listed_job("newer-job", "Completed", since + timedelta(hours=2)),
+    ]
+    with pytest.raises(RuntimeError, match="did not return jobs newest first"):
+        check_endpoint_available(ml, "endpoint", since=since)
